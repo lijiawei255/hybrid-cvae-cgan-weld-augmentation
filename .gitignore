@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-specific
+papers/
+REPRODUCTION_GUIDE.md
+
+# --- Project-specific: keep ALL data, checkpoints, paper PDFs and the
+# --- internal reproduction guide out of version control ---
+data/
+generated/
+runs/
+papers/
+REPRODUCTION_GUIDE.md
+*.pt
+*.pth
+*.ckpt
