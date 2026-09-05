@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the original paper below. This repository is an unofficial re-implementation."
+title: "Unofficial re-implementation of a hybrid CVAE-CGAN for WAAM defect image augmentation"
+type: software
+authors:
+  - family-names: "lijiawei255"
+license: MIT
+references:
+  - type: conference-paper
+    title: "Generation of WAAM Defect Images Using a Hybrid CVAE-CGAN: A Data Augmentation Strategy for Small and Imbalanced Datasets"
+    authors:
+      - family-names: "Yang"
+        given-names: "Junle"
+      - family-names: "Yuan"
+        given-names: "Lei"
+      - family-names: "Mu"
+        given-names: "Haonan"
+      - family-names: "He"
+        given-names: "Feng"
+      - family-names: "Ding"
+        given-names: "Donghong"
+      - family-names: "Pan"
+        given-names: "Zengxi"
+    year: 2025
+    notes: "IEEE conference paper, IEEE Xplore document no. 11168313"
+  - type: conference-paper
+    title: "RIAWELC: A Novel Dataset of Radiographic Images for Automatic Weld Defects Classification"
+    authors:
+      - family-names: "Totino"
+        given-names: "Benito"
+      - family-names: "Spagnolo"
+        given-names: "Fanny"
+      - family-names: "Perri"
+        given-names: "Stefania"
+    year: 2022
+    notes: "ICMECE 2022. Source of the public dataset used in this re-implementation; citing it is a usage requirement of the dataset."
