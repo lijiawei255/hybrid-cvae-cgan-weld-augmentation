@@ -18,10 +18,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
-def load_images(folder, per_class, img_size, seed):
+def load_images(files, per_class, img_size, seed):
+    """At most per_class images from an explicit file list; never padded."""
     rng = random.Random(seed)
-    files = sorted(p for p in folder.iterdir()
-                   if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    files = sorted(files)
     if len(files) > per_class:
         files = rng.sample(files, per_class)
     imgs = []
@@ -29,8 +29,6 @@ def load_images(folder, per_class, img_size, seed):
         img = Image.open(f).convert("RGB")
         img = img.resize((img_size, img_size), Image.BILINEAR)
         imgs.append(img)
-    while len(imgs) < per_class:
-        imgs.append(Image.new("RGB", (img_size, img_size), (220, 220, 220)))
     return imgs
 
 
@@ -46,17 +44,26 @@ def main():
     ap.add_argument("--font_size", type=int, default=22)
     args = ap.parse_args()
 
+    from augment import generated_by_class
+
     real_root, gen_root = Path(args.real_root), Path(args.gen_root)
     class_names = sorted([p.name for p in real_root.iterdir() if p.is_dir()])
+    pool = generated_by_class(gen_root, class_names)
     s = args.img_size
     g, lw = args.gap, args.label_width
 
     rows = []  # (label, [PIL images])
-    for i, cname in enumerate(class_names):
-        real_imgs = load_images(real_root / cname, args.per_class, s, seed=0)
-        gen_imgs = load_images(gen_root / f"class_{i}", args.per_class, s, seed=1)
-        print(f"class_{i} -> {cname}: {len(gen_imgs)} generated shown, "
-              f"{len(real_imgs)} real shown")
+    for cname in class_names:
+        real_files = [p for p in (real_root / cname).iterdir()
+                      if p.suffix.lower() in (".png", ".jpg", ".jpeg")]
+        if not pool[cname]:
+            raise SystemExit(
+                f"no generated images for class '{cname}' under {gen_root}; "
+                f"refusing to render a showcase figure with an empty row")
+        real_imgs = load_images(real_files, args.per_class, s, seed=0)
+        gen_imgs = load_images(pool[cname], args.per_class, s, seed=1)
+        print(f"{cname}: {len(pool[cname])} generated available ({len(gen_imgs)} shown), "
+              f"{len(real_files)} real available ({len(real_imgs)} shown)")
         rows.append((f"{cname} real", real_imgs))
         rows.append((f"{cname} gen", gen_imgs))
 
@@ -66,7 +73,8 @@ def main():
         font = ImageFont.load_default()
 
     header_h = 44
-    W = lw + args.per_class * s + (args.per_class - 1) * g
+    n_cols = max(len(imgs) for _, imgs in rows)
+    W = lw + n_cols * s + (n_cols - 1) * g
     H = header_h + len(rows) * s + (len(rows) - 1) * g
     canvas = Image.new("RGB", (W, H), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)

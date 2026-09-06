@@ -15,11 +15,12 @@ from pathlib import Path
 
 import torch
 from PIL import Image, ImageDraw, ImageFont
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Subset
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from data import ClassFolderDataset
+from augment import generated_by_class
+from data import ClassFolderDataset, ListDataset, make_splits
 from eval_fid import _features, _stats, fid_from_stats
 
 CLASS_DESCRIPTIONS = {
@@ -30,30 +31,14 @@ CLASS_DESCRIPTIONS = {
 }
 
 
-class ListDataset(Dataset):
-    def __init__(self, samples, tf):
-        self.samples = samples
-        self.tf = tf
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, i):
-        fp, y = self.samples[i]
-        return self.tf(Image.open(fp).convert("RGB")), y
-
-
-def load_row(folder, per_row, img_size, seed):
+def load_row(files, per_row, img_size, seed):
+    """At most per_row images from an explicit file list; never padded."""
     rng = random.Random(seed)
-    files = sorted(p for p in folder.iterdir()
-                   if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    files = sorted(files)
     if len(files) > per_row:
         files = rng.sample(files, per_row)
-    imgs = [Image.open(f).convert("RGB").resize((img_size, img_size), Image.BILINEAR)
+    return [Image.open(f).convert("RGB").resize((img_size, img_size), Image.BILINEAR)
             for f in files]
-    while len(imgs) < per_row:
-        imgs.append(Image.new("RGB", (img_size, img_size), (220, 220, 220)))
-    return imgs
 
 
 def main():
@@ -63,6 +48,9 @@ def main():
     ap.add_argument("--out_dir", default="results")
     ap.add_argument("--per_row", type=int, default=4)
     ap.add_argument("--img_size", type=int, default=160)
+    ap.add_argument("--channels", type=int, default=3)
+    ap.add_argument("--test_frac", type=float, default=0.2)
+    ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
@@ -72,7 +60,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    ds = ClassFolderDataset(real_root, args.img_size)
+    ds = ClassFolderDataset(real_root, args.img_size, args.channels)
     s, g = args.img_size, 8
 
     try:
@@ -82,24 +70,34 @@ def main():
         font = ImageFont.load_default()
         small = font
 
+    pool = generated_by_class(gen_root, ds.classes)
+    _, test_idx = make_splits(ds.samples, args.test_frac, args.seed)
+    test_set = set(test_idx)
+
     for i, cname in enumerate(ds.classes):
-        real_idx = [j for j, (_, y) in enumerate(ds.samples) if y == i]
-        gen_files = sorted(p for p in (gen_root / f"class_{i}").iterdir()
-                           if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+        # FID reference excludes the held-out test split, matching train_joint.py.
+        real_idx = [j for j, (_, y) in enumerate(ds.samples)
+                    if y == i and j not in test_set]
+        gen_files = pool[cname]
+        if not gen_files:
+            raise SystemExit(
+                f"no generated images for class '{cname}' under {gen_root}")
         gen_samples = [(f, i) for f in gen_files]
 
         dl_kw = dict(batch_size=args.batch_size, num_workers=args.num_workers,
                      pin_memory=True)
         real_loader = DataLoader(Subset(ds, real_idx), shuffle=False,
                                  drop_last=False, **dl_kw)
-        gen_loader = DataLoader(ListDataset(gen_samples, ds.tf), shuffle=False,
+        gen_loader = DataLoader(ListDataset(gen_samples, ds.tf, ds.channels), shuffle=False,
                                 drop_last=False, **dl_kw)
         mu_r, s_r = _stats(_features(real_loader, device))
         mu_f, s_f = _stats(_features(gen_loader, device))
         fid = fid_from_stats(mu_r, s_r, mu_f, s_f)
 
-        real_imgs = load_row(real_root / cname, args.per_row, s, seed=0)
-        gen_imgs = load_row(gen_root / f"class_{i}", args.per_row, s, seed=1)
+        real_imgs = load_row([p for p in (real_root / cname).iterdir()
+                              if p.suffix.lower() in (".png", ".jpg", ".jpeg")],
+                             args.per_row, s, seed=0)
+        gen_imgs = load_row(gen_files, args.per_row, s, seed=1)
 
         label_w, header_h, stats_h = 110, 30, 30
         W = label_w + args.per_row * s + (args.per_row - 1) * g
@@ -107,7 +105,8 @@ def main():
         canvas = Image.new("RGB", (W, H), (255, 255, 255))
         draw = ImageDraw.Draw(canvas)
         desc = CLASS_DESCRIPTIONS.get(cname, "")
-        draw.text((8, 5), f"{cname} ({desc})", fill=(0, 0, 0), font=font)
+        title = f"{cname} ({desc})" if desc else cname
+        draw.text((8, 5), title, fill=(0, 0, 0), font=font)
         draw.text((label_w + (W - label_w) * 0.25 - 24, 5), "Real",
                   fill=(90, 90, 90), font=small)
         draw.text((label_w + (W - label_w) * 0.75 - 52, 5), "Generated",

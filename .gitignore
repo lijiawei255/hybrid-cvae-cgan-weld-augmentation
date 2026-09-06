@@ -231,3 +231,5 @@ REPRODUCTION_GUIDE.md
 *.pt
 *.pth
 *.ckpt
+# editor/agent tooling, never part of the published repo
+.qoder/
