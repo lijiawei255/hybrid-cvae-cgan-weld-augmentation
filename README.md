@@ -36,6 +36,19 @@ using separate backward passes. The KL term shapes the latent space toward
 time; the perceptual and adversarial terms sharpen what a pure VAE would leave
 blurry.
 
+## What this repository is and is not
+
+This repository is a **faithful, from-scratch re-implementation** of the hybrid
+CVAE-CGAN training and augmentation protocol described by Yang et al. It is
+intended as a reference for researchers who want to cite, validate, or extend
+the method.
+
+It is **not** the original authors' code, a general-purpose image-generation
+library, or a drop-in tool for unrelated datasets. The absolute numbers are tied
+to the substitute datasets used here (LoHi-WELD and, in earlier commits,
+RIAWELC) and to a from-scratch ResNet-18 classifier, so they are not directly
+comparable to the papers' proprietary results.
+
 ## Disclaimer
 
 - This repository is an **independent re-implementation based solely on the published paper**. It is **not affiliated with, endorsed by, or connected to the original authors or their institutions**.
@@ -123,6 +136,27 @@ before reusing the numbers: that arm changed both variables at once, so neither
 effect is separately attributed, and its FID got worse while its reconstruction
 improved.
 
+### Recommended configuration
+
+Recommended generator configuration for LoHi-WELD (best downstream result in
+this repo):
+
+```bash
+python src/train_joint.py \
+  --data_root data/lohi \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --val_per_class 200 \
+  --img_size 224 --channels 3 \
+  --latent_dim 128 --kl_weight 0.059 \
+  --d_norm group --weighted_sampler \
+  --epochs 70 --seed 42 \
+  --out_dir runs/joint_lohi_recommended
+```
+
+This is the journal-extension configuration that reversed the r=1.0
+balance-to-max finding in this re-implementation. If you only have time for one
+generator setting, start here; still sweep `r` for your own data.
+
 ### Using your own dataset
 
 Point `--data_root` at a folder of class subfolders. Nothing else is
@@ -151,6 +185,19 @@ dataset-specific:
   measure the preprocessing mismatch instead of generation quality.
 - `--kl_weight` must be rescaled if you change the loss normalisation. See
   `models.cvae_loss` and the derivation in `CHANGELOG.md`.
+
+### Porting checklist
+
+1. Folder layout: one subfolder per class under `--data_root`.
+2. Class names are used everywhere (`--subset`, `--counts`, generated pool
+   metadata). Misspelled or unknown names raise.
+3. `--channels 3` for RGB, `--channels 1` for grayscale; `--img_size` must be
+   divisible by 16.
+4. Match `--subset` to your own minority count and desired `N_max`.
+5. If you enable `--fft_denoise`, pass it to both `train_joint.py` and
+   `eval_fid.py`.
+6. Retrain the classifier sweep with the same `--subset`, `--seed`, and
+   `--test_frac` as the generator.
 
 ## Results - v0.2.0 (LoHi-WELD, current)
 
@@ -187,23 +234,23 @@ Two findings, reported as measured:
    "fill to N_max" as a hypothesis to test on your own data, not a default.
 
 > **Finding 2 is partly superseded, and the table above is kept as published.**
-> Re-running the sweep with the journal extension's configuration
-> (`--d_norm group --weighted_sampler`, `--latent_dim 128`, `--kl_weight 0.059`,
-> the full 70 epochs) **reverses it at r=1.0**: that ratio becomes the *best* on
-> the curve, macro-F1 0.7168 against this arm's own 0.6848 real-only baseline
-> (+0.032), with pore F1 0.5053 against the published 0.3871 (+0.118). Over the
-> four ratios that completed cleanly the curve is monotone increasing
-> (0.6848 -> 0.6932 -> 0.7102 -> 0.7168), which is the shape the journal paper
-> reports and the shape the v0.2.0 curve did not have. The r=0.25 arm of the new
-> sweep is **not a measurement**: its loss spiked three orders of magnitude at the
-> final epoch and the classifier scores the final epoch.
+> Across three independent generator/pool/classifier seeds, the journal-extension
+> configuration (`--d_norm group --weighted_sampler`, `--latent_dim 128`,
+> `--kl_weight 0.059`, full 70 epochs) gives r=1.0 macro-F1 **0.7185 ± 0.0019**,
+> +0.0399 over its 0.6785 ± 0.0447 real-only mean; its pore F1 is
+> **0.4658 ± 0.0475**, +0.1132. This supports a positive *mean* r=1.0 effect, but
+> not a monotone curve or a unique optimum there: r=0.50 has the slightly higher
+> complete-seed macro-F1 mean (0.7210), while r=0.25 is 0.7419 on two valid seeds.
+> The seed-42 r=0.25 run is invalid because its final-epoch loss spiked; it is
+> excluded rather than making the whole ratio invalid.
 >
-> Do not read this as "GroupNorm fixed balance-to-max". The new configuration
-> differs from v0.2.0 in five respects at once, and the matched control - the
-> latent-128 BatchNorm arm in `runs/probe_eq_g0.1` - has not been swept, so the
-> reversal cannot yet be attributed to either switch. It is also a single seed,
-> against a measured run-to-run spread of 0.034 pore F1. Full numbers, both
-> tables and all four caveats: `docs/CALIBRATION.md` section 9.
+> The matched latent-128 BatchNorm, unweighted-sampler control also has a positive
+> r=1.0 result: macro-F1 0.7009 against 0.6332 real-only (+0.0677), pore F1
+> 0.4222 against 0.4000. Thus GroupNorm and weighted sampling are **not required**
+> for the r=1.0 sign flip. This does not isolate the remaining latent-dimension,
+> KL-weight, and full-schedule changes, or estimate either switch's separate
+> benefit; the control is one seed. Full tables and limitations:
+> `docs/CALIBRATION.md` section 9.
 
 Figures in `results/`: `filling_rate_curve.png` (the sweep above),
 `training_curves.png` (loss components and FID per epoch),
@@ -212,19 +259,31 @@ Figures in `results/`: `filling_rate_curve.png` (the sweep above),
 (r=0 vs r=1), `class_distribution.png`, plus per-class close-ups
 (`class_*.png`) and the real-vs-generated grid (`real_vs_generated.png`).
 
-**Caveats.** Single seed, and the classifier is not bit-reproducible on GPU:
+**Committed LoHi-WELD showcase.** These checked-in examples let clone users see
+the current output format without the dataset; they are qualitative examples,
+not additional evaluation evidence.
+
+![LoHi-WELD real versus generated samples](results/real_vs_generated.png)
+
+| deposit | discontinuity |
+|---|---|
+| ![deposit close-up](results/class_deposit.png) | ![discontinuity close-up](results/class_discontinuity.png) |
+| pore | stain |
+| ![pore close-up](results/class_pore.png) | ![stain close-up](results/class_stain.png) |
+
+**Caveats.** The published v0.2.0 table remains single seed. The
+GroupNorm + balanced-sampler re-run has three generator/pool/classifier seeds
+(except r=0.25, where the seed-42 final-epoch spike leaves n=2); the matched
+BatchNorm control is one seed. The classifier is not bit-reproducible on GPU:
 `train_classifier.py` seeds every RNG but never enables deterministic CUDA
 algorithms, so a repeat of the *unchanged* real-only arm at the same seed moved
-pore F1 by 0.034 and macro-F1 by 0.009. Treat differences below that as noise,
-in either direction - the earlier "~0.02 macro-F1" guess in this paragraph was
-too optimistic for the minority class, which is scored on only 61 test images.
-It also evaluates the **final** epoch at a constant learning rate, with no
-early stopping and no best-epoch selection, so a late loss spike can invalidate
-one arm outright. Both are measured and explained in `docs/CALIBRATION.md`
-section 10. Separately, the downstream classifier is a from-scratch ResNet-18
-over single images, not the papers' LSTM/GRU over 21-frame sequences, so absolute
-scores are not comparable to the papers'. See the limitations list above for the
-rest of the calibration record.
+pore F1 by 0.034 and macro-F1 by 0.009. It also evaluates the **final** epoch at
+a constant learning rate, with no early stopping or best-epoch selection, so a
+late loss spike can invalidate one arm outright. Both are measured and explained
+in `docs/CALIBRATION.md` section 10. Separately, the downstream classifier is a
+from-scratch ResNet-18 over single images, not the papers' LSTM/GRU over 21-frame
+sequences, so absolute scores are not comparable to the papers'. See the
+limitations list above for the rest of the calibration record.
 
 ## Results - v0.1.0 (superseded, do not quote)
 
@@ -260,21 +319,10 @@ result is reported as-is. Protocol notes: `src/train_classifier.py`; the
 generator was trained on all real images, so generated data may carry
 information about test images (same protocol limitation as the paper).
 
-Real vs. generated samples per class (upper row real, lower row generated):
-
-![Real vs generated samples](results/real_vs_generated.png)
-
-Per-class close-ups (top row real, bottom row generated; the number in each
-caption is that class's FID — lower is better; the normalization is
-non-standard, so compare classes only against each other, not against
-literature values):
-
-| CR (cracks), FID 71.9 | LP (lack of penetration), FID 63.5 |
-|---|---|
-| ![CR close-up](results/class_CR.png) | ![LP close-up](results/class_LP.png) |
-| **PO (porosity), FID 83.5** | **ND (no defect), FID 14.7** |
-| ![PO close-up](results/class_PO.png) | ![ND close-up](results/class_ND.png) |
-
+The v0.1.0 RIAWELC image assets were removed when the repository's primary
+experiment and committed showcase switched to LoHi-WELD. The historical numeric
+results above are retained, but no v0.1.0 samples are displayed here: the current
+`results/` images are LoHi-WELD artifacts and must not be relabelled as RIAWELC.
 
 ## Repository layout
 
