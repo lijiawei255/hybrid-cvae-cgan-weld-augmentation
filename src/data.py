@@ -11,6 +11,7 @@ every other module - keep them consistent if you change them:
   indices silently samples the wrong classes on any other dataset.
 """
 import random
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -177,6 +178,25 @@ def count_by_class(dataset, indices):
     for i in indices:
         out[dataset.classes[dataset.samples[i][1]]] += 1
     return out
+
+
+def balanced_sample_weights(labels):
+    """One resampling weight per sample, proportional to 1/N_class.
+
+    This is the journal paper's data-balancing strategy (its Table 3 lists
+    WeightedRandomSampler), whose stated purpose is that "each training batch
+    possesses a balanced class distribution", so rare defects contribute to every
+    gradient update instead of to a few.
+
+    Capping per-class counts with --subset does not achieve that. A 40-image
+    minority class inside a 1090-image subset is still only 3.7% of draws, so at
+    batch_size=8 most minibatches contain no minority sample at all.
+
+    The shape is one weight per *sample* rather than per class so the result can be
+    handed straight to torch.utils.data.WeightedRandomSampler.
+    """
+    counts = Counter(labels)
+    return [1.0 / counts[label] for label in labels]
 
 
 def parse_name_counts(text):

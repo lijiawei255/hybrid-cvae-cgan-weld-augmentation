@@ -35,6 +35,42 @@ them. This file keeps only the conclusions.
   reproduced papers and datasets.
 - **LoHi-WELD provenance note** in `DATA_SOURCES.md`: its repository is built on
   WongKinYiu's YOLOv7; only the dataset and annotations are used here.
+- **Four switches for components that appear only in the journal extension**,
+  all defaulting to the conference-paper behaviour so the tagged v0.2.0 runs stay
+  reproducible: `--d_norm {batch,group}` (discriminator normalisation),
+  `--weighted_sampler` (`WeightedRandomSampler` at P ~ 1/N_class),
+  `--kl_warmup ZERO,RAMP` (KL annealing) and `--monitor {val_loss,val_recon}`
+  (best-checkpoint metric). The first two are measured and recommended; KL
+  annealing is implemented and unit-tested but deliberately **not
+  training-validated**, because it needs the journal paper's 200-epoch protocol
+  and would leave only 10 epochs at full beta inside a 70-epoch run. Documented
+  in both READMEs.
+- **`docs/CALIBRATION.md` sections 8-10.** Section 8 records why the journal
+  paper's headline 96.79% is not a target for this repo and must not be quoted as
+  one. Section 9 records the measured journal-extension arm, including that its
+  discriminator hinge loss moves to a median of 1.998 - matching the paper's
+  "approximately constant value around 2.0" - and including two explicit
+  qualifications: that arm changed two variables at once, and its FID got worse
+  while its reconstruction improved. Section 10 records that the downstream
+  classifier is not bit-reproducible on GPU and scores the final epoch.
+- **Section 1 addendum withdrawing an earlier explanation.** The claim that a
+  low-information latent is why our generations lack fidelity is withdrawn as
+  unsupported: `latent_dim x kl` is already at the paper's reported magnitude
+  under either reading of its normalisation.
+- **Downstream sweep for the journal-extension configuration** (seed 42,
+  `runs/sweep_paper2_s42`), which **reverses the published v0.2.0 finding that
+  balance-to-max does not transfer**. At r=1.0 macro-F1 is 0.7168 against this
+  arm's own 0.6848 real-only baseline (+0.032) where the published curve had
+  0.6418 against 0.6936 (-0.052, its worst ratio); pore F1 is 0.5053 against the
+  published 0.3871. Across the four ratios that completed cleanly the curve is
+  monotone increasing, the shape the journal paper reports. Recorded with four
+  caveats in `docs/CALIBRATION.md` section 9 and behind a superseded banner in
+  both READMEs rather than by editing the published table: the new configuration
+  differs from v0.2.0 in five respects at once, the matched latent-128 BatchNorm
+  control has not been swept, its r=0.25 arm was invalidated by a final-epoch
+  loss spike, and it is a single seed. Best FID is effectively unchanged against
+  v0.2.0 (215.99 vs 216.87) even though best `val_recon` improved 2.8x (0.0177 vs
+  0.0494), so "better generator" holds on the reconstruction axis only.
 
 ### Fixed
 
@@ -43,6 +79,22 @@ them. This file keeps only the conclusions.
   and then the axes moved underneath it, covering the right matrix's third column
   and title. The right-hand gutter is now reserved first (`right=0.80`) and the
   colorbar created afterwards; `results/confusion_matrices.png` was redrawn.
+- **`.gitignore` only covered the exact name `generated/`.** An alternative
+  generated-image pool (`generated_paper2/`, 1,312 synthetic images) showed up as
+  untracked and could have been staged by accident. Widened to `generated*/`.
+  `results/` remains tracked - committed result figures are intentional.
+- **Off-by-one held-out test-set count.** Both READMEs said 1,602 images; the
+  logged per-class supports (239 + 595 + 61 + 708) sum to 1,603.
+- **Stale `--fft_denoise` claim.** The README said it was "left untested on
+  LoHi-WELD". It has since been measured there: 99.2-99.9% of the crops' spectral
+  energy sits inside normalised radius 0.1, so at `cutoff = 0.25` the filter
+  retains 0.0% of the mid-band and changes the image by an MSE of 3-14 out of a
+  possible 65,025. It mostly smooths the *target*, so any apparent gain must be
+  read as "the task got easier", not "the method got stronger"
+  (`docs/CALIBRATION.md` section 3).
+- **The README's noise caveat was a guess.** "Treat differences under ~0.02
+  macro-F1 as noise" is replaced with the measured spread from repeating an
+  unchanged arm at the same seed: pore F1 moved 0.034, macro-F1 0.009.
 
 ## v0.2.0 - 2026-09-06 (commit 1b68788)
 

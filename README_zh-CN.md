@@ -71,6 +71,24 @@ python src/make_paper_figures.py --data_root data/lohi \
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 ```
 
+### 取自期刊扩展版的开关
+
+上面的快速开始复现的是*会议*论文的配置。`train_joint.py` 另有四个开关，实现的是只出现在期刊扩展版（MSSP 2026）中的组件。四者的默认值都保持会议论文的行为，因此不显式启用就什么都不会变。
+
+| 开关 | 默认值 | 期刊扩展版取值 | 状态 |
+|---|---|---|---|
+| `--d_norm` | `batch` | `group` | 已实测，推荐 |
+| `--weighted_sampler` | 关闭 | 开启 | 已实测，推荐 |
+| `--kl_warmup` | 关闭（beta 恒定） | `10,50` | 已实现并通过单元测试，**未经训练验证** |
+| `--monitor` | `val_loss` | - | 仅在与 `--kl_warmup` 同时使用时才需要 |
+
+- `--d_norm group` 把判别器的 BatchNorm 换成 GroupNorm。在 `--batch_size 8` 下，BatchNorm 会让一个样本的得分依赖于同批次另外七个样本；GroupNorm 在单个样本内部归一化。实测效果：判别器 hinge loss 的中位数从 0.819（判别器占优）变为 1.998，与期刊论文所述其"稳定在约 2.0 的常数值附近"一致。
+- `--weighted_sampler` 用 `WeightedRandomSampler` 抽取训练批次，权重正比于 `1/N_class`。`--subset` 只限制每类数量，并**不**平衡批次：1,090 张的子集里一个 40 张的少数类只占 3.7% 的抽样，因此 batch size 为 8 时，多数 minibatch 里根本没有少数类样本。
+- `--kl_warmup ZERO,RAMP` 先把 beta 保持为 0 共 `ZERO` 个 epoch，然后在 `RAMP` 个 epoch 内线性升到 `--kl_weight`。它需要期刊论文的 200-epoch 协议才有意义；在 70-epoch 的运行里只有 10 个 epoch 会跑在满 beta 下，因此本仓库刻意不训练它。
+- `--monitor val_recon` 仅以重建 MSE 挑选最佳 checkpoint。在 `--kl_warmup` 下必须使用，因为总损失包含 `beta * KL`，其含义会随 beta 爬升而改变。
+
+同时启用 `--d_norm group --weighted_sampler` 就是 `docs/CALIBRATION.md` 第 9 节实测的那个配置。复用其中数字前请先读该节的两条限定：那一臂同时改了两个变量，因此两个效果都没有被单独归因；并且它的 FID 变差而重建变好。
+
 ### 使用你自己的数据集
 
 把 `--data_root` 指向一个"类名子文件夹"结构即可。其余均与数据集无关：
@@ -78,14 +96,14 @@ python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 - 类别身份在所有地方都**以类名**表达（`--subset`、`--counts`），且每个类名都会对照数据集或 checkpoint 校验。未知或拼错的类名会报错，而不是静默选错类。
 - `--subset` 的数量请依据你自己的每类数量设定。方法面向*小而失衡*数据，因此少数类数量要低到任务尚未被解决，多数类数量设为你希望 balance-to-max 填到的 `N_max`。
 - `--channels 3` 适用于彩色数据；`--img_size` 必须能被 16 整除。
-- `--fft_denoise` 启用论文的 FFT 低通预处理。默认关闭：在 RIAWELC 上实测无必要（频带受限的放射图，见 `CHANGELOG.md`），在 LoHi-WELD 上未测试（采用了更简单的默认）。若你的图像带高频传感器噪声请打开。
+- `--fft_denoise` 启用论文的 FFT 低通预处理。默认关闭，且在本仓库使用的两个数据集上都实测接近空操作。RIAWELC 的放射图本身频带受限。LoHi-WELD 的裁剪块把 99.2–99.9% 的频谱能量放在归一化半径 0.1 以内，因此在论文的 `cutoff = 0.25` 下，滤波对缺陷边缘所在中频段的保留率为 **0.0%**，对图像的改变在 [0, 255] 尺度上仅为 MSE 3–14（上限为 65,025）。它在那里之所以无效，是因为这些裁剪块本身就是小源框的上采样，而上采样无法创造高频内容——所以滤波主要做的是让*目标*更平滑。它带来的任何表面提升都应读作"任务变简单了"，而非"方法变强了"。见 `docs/CALIBRATION.md` 第 3 节。若你自己的图像带有真实的高频传感器噪声，可以打开；同时请也给 `src/eval_fid.py` 传该参数，否则 FID 测到的是预处理不一致，而不是生成质量。
 - 若你改动损失归一化，`--kl_weight` 必须重新换算。见 `models.cvae_loss` 与 `CHANGELOG.md` 中的推导。
 
 ## 结果 - v0.2.0（LoHi-WELD，当前）
 
 单 seed（42）。生成器：在论文规模子集（pore 40 / deposit 150 / discontinuity 300 / stain 600）上联合训练 CVAE-CGAN，70 epoch 中于第 25 epoch 早停（最佳 epoch 15）。诊断：FID 从 371 降至 216 后在 ~200 平台（仅作诊断，不可与任何已发表 FID 比较）；重建 MSE 0.049–0.060，对照常数均值基线 0.062；样图网格显示清晰的类形态。
 
-**Filling-rate 扫描**——每个 ratio 一个从零训练的 ResNet-18，各 100 epoch，全部在同一个 held-out 纯真实测试集（1,602 张）上评估：
+**Filling-rate 扫描**——每个 ratio 一个从零训练的 ResNet-18，各 100 epoch，全部在同一个 held-out 纯真实测试集（1,603 张）上评估：
 
 | ratio | accuracy | macro-F1 | weighted-F1 | deposit | discontinuity | pore | stain |
 |---|---|---|---|---|---|---|---|
@@ -100,9 +118,14 @@ python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 1. **增广帮助少数类。** pore（304 张真实裁剪，稀缺类）在 r=0.25 获 +0.095 F1、r=0.75 获 +0.112；macro-F1 在 r=0.25 达峰，较仅真实基线 +0.033。这是方法的核心论断，在公开数据集上得到演示。
 2. **论文的 balance-to-max 建议在此不迁移。** r=1.0 是*最差*比例（macro-F1 0.642，低于 0.694 基线），而期刊扩展报告单调改善并在 1.0 达峰。可能原因是生成器保真度：r=1.0 时三个类约一半训练集为合成图，而我们的样本比论文的糊，灌满会稀释真实信号而非强化它。请把"填到 N_max"当作在你自己数据上待检验的假设，而非默认。
 
+> **结论 2 已被部分取代，上方表格按发布原样保留。**
+> 用期刊扩展版的配置（`--d_norm group --weighted_sampler`、`--latent_dim 128`、`--kl_weight 0.059`、跑满 70 epoch）重跑扫描后，**r=1.0 处的结论被反转**：该比例成为曲线上*最好*的一点，macro-F1 0.7168，相对本臂自己的纯真实基线 0.6848 高出 +0.032；pore F1 0.5053，相对已发布的 0.3871 高出 +0.118。在干净跑完的四个比例上，曲线单调上升（0.6848 -> 0.6932 -> 0.7102 -> 0.7168），这正是期刊论文报告、而 v0.2.0 曲线不具备的形状。新扫描的 r=0.25 臂**不是一个有效测量**：其 loss 在最后一个 epoch 尖峰了三个数量级，而分类器评分的正是最后一个 epoch。
+>
+> 请不要把这读成"GroupNorm 修好了 balance-to-max"。新配置与 v0.2.0 同时相差五个方面，而匹配对照——`runs/probe_eq_g0.1` 中那个 latent-128 的 BatchNorm 臂——尚未扫描，因此这次反转还不能归因于两个开关中的任何一个。它也仅是单 seed，而实测的同 seed 重跑波动为 pore F1 0.034。完整数字、两张表与全部四条限定见 `docs/CALIBRATION.md` 第 9 节。
+
 `results/` 中的图：`filling_rate_curve.png`（上述扫描）、`training_curves.png`（各损失分量与每 epoch FID）、`reconstruction_comparison.png`（真实/重建/生成）、`latent_tsne.png`（编码器隐空间投影）、`confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png`，以及每类特写（`class_*.png`）与真实-生成对照网格（`real_vs_generated.png`）。
 
-**注意事项。** 单 seed——小于 ~0.02 macro-F1 的差异请视为噪声。下游分类器是单帧图像上从零训练的 ResNet-18，而非论文在 21 帧序列上的 LSTM/GRU，因此绝对分数不可与论文比较。详见上文局限列表与 `docs/CALIBRATION.md` 的完整标定记录。
+**注意事项。** 单 seed，且分类器在 GPU 上并非逐位可复现：`train_classifier.py` 为所有随机源设了种子，但从未启用确定性 CUDA 算法，因此在同 seed 下重复*未改动*的纯真实臂，pore F1 变动了 0.034、macro-F1 变动了 0.009。小于该幅度的差异请在任一方向上都视为噪声——本段此前"~0.02 macro-F1"的估计对少数类过于乐观，而少数类只在 61 张测试图上评分。它还在恒定学习率下评估**最后**一个 epoch，没有早停也没有最佳 epoch 选择，因此一次后期 loss 尖峰就足以让某一臂整体失效。两者均已在 `docs/CALIBRATION.md` 第 10 节实测并解释。另外，下游分类器是单帧图像上从零训练的 ResNet-18，而非论文在 21 帧序列上的 LSTM/GRU，因此绝对分数不可与论文比较。其余标定记录见上文局限列表。
 
 ## 结果 - v0.1.0（已被取代，请勿引用）
 

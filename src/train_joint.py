@@ -12,8 +12,19 @@ CHANGELOG.md.
 Combined objective, with this repo's calibrated weights (the paper's beta=30 and
 gamma=1.0 belong to a different loss normalisation; see docs/CALIBRATION.md):
 
-    L_G = MSE_recon + 0.015 * KL + 0.1 * VGG19_perceptual + 0.1 * hinge_G
+    L_G = MSE_recon + beta * KL + 0.1 * VGG19_perceptual + 0.1 * hinge_G
     L_D = hinge_D(real, fake), discriminator spectral-normalised
+
+`beta` defaults to a constant 0.015 and can instead follow the journal paper's
+annealing schedule via --kl_warmup.
+
+Four components come from the journal extension rather than the conference paper
+and are switchable, each defaulting to the configuration the tagged v0.2.0 runs
+were produced with: --d_norm group (GroupNorm in the discriminator, its Table 3
+choice), --weighted_sampler (class-balanced batches at P ~ 1/N_class),
+--kl_warmup ZERO,RAMP (beta held at zero, then ramped linearly to --kl_weight)
+and --monitor val_recon (the metric its ReduceLROnPlateau watched). They are off
+by default so that a recorded v0.2.0 config still reproduces a v0.2.0 run.
 
 Leakage-free by construction. Images are split into a train pool and a real-only
 held-out test set *first*; the generator only ever sees subsets drawn from the
@@ -35,15 +46,33 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from torchvision.models import Inception_V3_Weights, inception_v3
 from torchvision.utils import save_image
 
-from data import (ClassFolderDataset, count_by_class, make_splits,
-                  parse_name_counts, sample_named_subset)
+from data import (ClassFolderDataset, balanced_sample_weights, count_by_class,
+                  make_splits, parse_name_counts, sample_named_subset)
 from eval_fid import _features, _stats, balanced_labels, fid_from_stats
 from models import (Decoder, Discriminator, Encoder, PerceptualLoss, cvae_loss,
-                    hinge_d, hinge_g, reparameterize, weights_init)
+                    hinge_d, hinge_g, kl_schedule, reparameterize, weights_init)
+
+
+def parse_kl_warmup(text):
+    """Parse '--kl_warmup ZERO,RAMP' into (zero_epochs, ramp_epochs).
+
+    Empty means annealing off, which keeps the constant beta the tagged v0.2.0 runs
+    used. A ramp shorter than one epoch is rejected rather than treated as "off",
+    so a typo cannot silently disable the schedule being tested.
+    """
+    if not text:
+        return 0, 0
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) != 2:
+        raise ValueError(f"--kl_warmup takes 'ZERO,RAMP' epoch counts, got {text!r}")
+    zero, ramp = int(parts[0]), int(parts[1])
+    if ramp < 1:
+        raise ValueError(f"--kl_warmup ramp must be at least 1 epoch, got {text!r}")
+    return zero, ramp
 
 
 def build_inception(device):
@@ -142,10 +171,40 @@ def main():
     ap.add_argument("--patience", type=int, default=10, help="early-stopping patience in epochs")
     ap.add_argument("--lr_factor", type=float, default=0.2)
     ap.add_argument("--lr_patience", type=int, default=5)
+    ap.add_argument("--d_norm", choices=("batch", "group"), default="batch",
+                    help="discriminator normalisation. 'batch' is what the tagged v0.2.0 runs "
+                         "used; 'group' is the journal paper's Table 3 choice, made \"to ensure "
+                         "stability with small batch sizes, avoiding the statistical instability "
+                         "associated with Batch Normalisation\". At --batch_size 8 a BatchNorm D "
+                         "scores an image using statistics from its seven batch neighbours; our "
+                         "measured hinge_d sits at a median of 0.82 (dominant D, 97% of epochs "
+                         "below 1.5) where the paper reports an equilibrium near 2.0.")
+    ap.add_argument("--weighted_sampler", action="store_true",
+                    help="draw training batches with WeightedRandomSampler at P ~ 1/N_class, the "
+                         "journal paper's data-balancing strategy. Off by default so the tagged "
+                         "v0.2.0 runs stay reproducible. --subset caps per-class counts but does "
+                         "not balance batches: a 40-image class in a 1090-image subset is 3.7% of "
+                         "draws, so most batch_size=8 minibatches contain none of it.")
+    ap.add_argument("--kl_warmup", default="",
+                    help="KL annealing as 'ZERO,RAMP' epoch counts; empty (default) holds beta "
+                         "constant, which is what the tagged v0.2.0 runs used. The journal paper "
+                         "holds beta at 0 for 10 epochs then ramps linearly to its 0.5 target "
+                         "over 50, naming a constant high beta as what \"risks posterior collapse "
+                         "where the encoder ignores inputs\". Its schedule needs the --epochs "
+                         "200 protocol: inside paper 1's 70 epochs only 10 epochs would run at "
+                         "full beta.")
+    ap.add_argument("--monitor", choices=("val_loss", "val_recon"), default="val_loss",
+                    help="metric fed to ReduceLROnPlateau and early stopping. 'val_loss' is the "
+                         "tagged v0.2.0 behaviour; 'val_recon' is the journal paper's, whose "
+                         "scheduler \"monitored validation reconstruction loss\". This matters "
+                         "under --kl_warmup: the total includes beta*KL, so a rising ramp trips "
+                         "the scheduler and early stopping on its own schedule rather than on "
+                         "reconstruction quality.")
     ap.add_argument("--fid_every", type=int, default=1, help="paper computes FID every epoch")
     ap.add_argument("--sample_every", type=int, default=10)
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
+    kl_zero, kl_ramp = parse_kl_warmup(args.kl_warmup)
 
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -168,6 +227,8 @@ def main():
     print(f"classes ({num_classes}): {classes}")
     print(f"device={device} img_size={args.img_size} channels={args.channels} "
           f"fft_denoise={args.fft_denoise}")
+    print(f"d_norm={args.d_norm} weighted_sampler={args.weighted_sampler} "
+          f"kl_warmup={kl_zero},{kl_ramp} monitor={args.monitor}")
     print(f"held-out real test (never seen by generator or classifier training): "
           f"{count_by_class(ds, test_idx)} -> {len(test_idx)}")
     print(f"generator train subset: {count_by_class(ds, gen_train)} -> {len(gen_train)}")
@@ -176,7 +237,13 @@ def main():
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     dl_kw = dict(num_workers=args.num_workers, pin_memory=True,
                  persistent_workers=args.num_workers > 0)
-    loader = DataLoader(Subset(ds, gen_train), batch_size=args.batch_size, shuffle=True,
+    sampler = None
+    if args.weighted_sampler:
+        labels = [ds.samples[i][1] for i in gen_train]
+        sampler = WeightedRandomSampler(balanced_sample_weights(labels),
+                                        num_samples=len(gen_train), replacement=True)
+    loader = DataLoader(Subset(ds, gen_train), batch_size=args.batch_size,
+                        shuffle=sampler is None, sampler=sampler,
                         drop_last=True, **dl_kw)
     val_loader = DataLoader(Subset(ds, gen_val), batch_size=64, shuffle=False,
                             drop_last=False, **dl_kw)
@@ -184,7 +251,8 @@ def main():
     # ---- models --------------------------------------------------------------
     enc = Encoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size).to(device)
     dec = Decoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size).to(device)
-    dis = Discriminator(args.channels, num_classes, args.base_ch, args.img_size).to(device)
+    dis = Discriminator(args.channels, num_classes, args.base_ch, args.img_size,
+                        norm=args.d_norm).to(device)
     dis.apply(weights_init)
     perc = PerceptualLoss(args.channels).to(device)
 
@@ -224,13 +292,15 @@ def main():
 
     history_path = out / "history.csv"
     with open(history_path, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow(["epoch", "recon", "kl", "perc", "loss_g", "loss_d",
+        csv.writer(f).writerow(["epoch", "beta", "recon", "kl", "perc", "loss_g", "loss_d",
                                 "val_loss", "val_recon", "fid", "lr", "seconds"])
 
-    best = {"val": float("inf"), "epoch": 0, "fid": float("nan"), "state": None}
+    best = {"val": float("inf"), "monitored": float("inf"), "epoch": 0,
+            "fid": float("nan"), "state": None}
     bad_epochs = 0
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
+        beta = kl_schedule(epoch, args.kl_weight, kl_zero, kl_ramp)
         enc.train(); dec.train(); dis.train()
         agg = dict(recon=0.0, kl=0.0, perc=0.0, g=0.0, d=0.0)
         steps = 0
@@ -242,7 +312,7 @@ def main():
             mu, logvar = enc(x, y)
             z = reparameterize(mu, logvar)
             recon = dec(z, y)
-            loss_cvae, l_recon, l_kl = cvae_loss(x, recon, mu, logvar, args.kl_weight)
+            loss_cvae, l_recon, l_kl = cvae_loss(x, recon, mu, logvar, beta)
             l_perc = perc(recon, x)
             fake_g = dec(torch.randn(b, args.latent_dim, device=device), y)
             l_adv = hinge_g(dis(fake_g, y))
@@ -265,42 +335,48 @@ def main():
                 "training loader produced no batches: the subset is smaller than "
                 "--batch_size with drop_last enabled; lower --batch_size")
 
+        # Validation uses the same beta as training, so val_loss stays on the same
+        # scale as the objective actually being optimised at this epoch.
         val_loss, val_recon = validate(enc, dec, perc, val_loader, device,
-                                       args.kl_weight, args.perc_weight)
-        sched_g.step(val_loss); sched_d.step(val_loss)
+                                       beta, args.perc_weight)
+        monitored = val_recon if args.monitor == "val_recon" else val_loss
+        sched_g.step(monitored); sched_d.step(monitored)
         lr = opt_g.param_groups[0]["lr"]
 
         fid = compute_fid() if (args.fid_every and epoch % args.fid_every == 0) else float("nan")
         seconds = time.time() - t0
 
         with open(history_path, "a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow([epoch, f"{agg['recon']:.6f}", f"{agg['kl']:.6f}",
+            csv.writer(f).writerow([epoch, f"{beta:.6f}", f"{agg['recon']:.6f}",
+                                    f"{agg['kl']:.6f}",
                                     f"{agg['perc']:.6f}", f"{agg['g']:.6f}",
                                     f"{agg['d']:.6f}", f"{val_loss:.6f}",
                                     f"{val_recon:.6f}", f"{fid:.4f}",
                                     f"{lr:.3e}", f"{seconds:.1f}"])
-        print(f"epoch {epoch}/{args.epochs} recon={agg['recon']:.4f} kl={agg['kl']:.4f} "
-              f"perc={agg['perc']:.4f} loss_d={agg['d']:.4f} "
-              f"val={val_loss:.4f} fid={fid:.2f} lr={lr:.1e} ({seconds:.0f}s)")
+        print(f"epoch {epoch}/{args.epochs} beta={beta:.4f} recon={agg['recon']:.4f} "
+              f"kl={agg['kl']:.4f} perc={agg['perc']:.4f} loss_d={agg['d']:.4f} "
+              f"val={val_loss:.4f} val_recon={val_recon:.4f} fid={fid:.2f} "
+              f"lr={lr:.1e} ({seconds:.0f}s)")
 
         if (args.sample_every and epoch % args.sample_every == 0) or epoch == args.epochs:
             save_sample_grid(enc, dec, grid_x, grid_y, args.latent_dim,
                              out / f"samples_ep{epoch}.png", nrow=grid_nrow)
 
-        if val_loss < best["val"] - 1e-6:
-            best = {"val": val_loss, "epoch": epoch, "fid": fid,
+        if monitored < best["monitored"] - 1e-6:
+            best = {"val": val_loss, "monitored": monitored, "epoch": epoch, "fid": fid,
                     "state": cpu_state(enc, dec, dis)}
             bad_epochs = 0
             torch.save(best_state_payload(best, args, classes, num_classes), out / "joint.pt")
-            print(f"  -> new best val_loss={val_loss:.4f}, checkpoint saved")
+            print(f"  -> new best {args.monitor}={monitored:.4f}, checkpoint saved")
         else:
             bad_epochs += 1
             if bad_epochs >= args.patience:
-                print(f"early stopping at epoch {epoch}: no val improvement for "
+                print(f"early stopping at epoch {epoch}: no {args.monitor} improvement for "
                       f"{bad_epochs} epochs (best epoch {best['epoch']})")
                 break
 
-    print(f"best: epoch {best['epoch']} val_loss={best['val']:.4f} fid={best['fid']:.2f}")
+    print(f"best: epoch {best['epoch']} {args.monitor}={best['monitored']:.4f} "
+          f"val_loss={best['val']:.4f} fid={best['fid']:.2f}")
     print(f"checkpoint -> {out / 'joint.pt'}; history -> {history_path}")
 
 
@@ -321,8 +397,11 @@ def best_state_payload(best, args, classes, num_classes):
         "latent_dim": args.latent_dim, "base_ch": args.base_ch,
         "img_size": args.img_size, "img_channels": args.channels,
         "best_epoch": best["epoch"], "best_val_loss": best["val"], "best_fid": best["fid"],
+        "best_monitored_metric": args.monitor, "best_monitored_value": best["monitored"],
         "kl_weight": args.kl_weight, "perc_weight": args.perc_weight,
         "adv_weight": args.adv_weight, "seed": args.seed,
+        "d_norm": args.d_norm, "weighted_sampler": args.weighted_sampler,
+        "kl_warmup": args.kl_warmup, "monitor": args.monitor,
         "fft_denoise": args.fft_denoise, "fft_cutoff": args.fft_cutoff,
         "subset": args.subset, "test_frac": args.test_frac,
     })
