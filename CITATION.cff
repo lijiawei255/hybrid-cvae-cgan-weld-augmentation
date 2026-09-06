@@ -103,3 +103,70 @@ references:
     doi: "10.1109/ACCESS.2024.3407019"
     journal: "IEEE Access"
     notes: "Source of the visible-light weld defect dataset intended as the primary experiment. Citing it is a usage requirement of the dataset."
+
+  # ---------------------------------------------------------------------
+  # Implementation-component references: methods this repo uses in its
+  # analyses and backbones, distinct from the reproduced papers above.
+  # ---------------------------------------------------------------------
+  - type: conference-paper
+    title: "GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium"
+    authors:
+      - family-names: "Heusel"
+        given-names: "Martin"
+      - family-names: "Ramsauer"
+        given-names: "Hubert"
+      - family-names: "Unterthiner"
+        given-names: "Thomas"
+      - family-names: "Nessler"
+        given-names: "Bernhard"
+      - family-names: "Hochreiter"
+        given-names: "Sepp"
+    year: 2017
+    notes: "NeurIPS 2017. Origin of the Frechet Inception Distance used throughout this repo."
+  - type: article
+    title: "Visualizing Data using t-SNE"
+    authors:
+      - family-names: "van der Maaten"
+        given-names: "Laurens"
+      - family-names: "Hinton"
+        given-names: "Geoffrey"
+    year: 2008
+    journal: "Journal of Machine Learning Research"
+    notes: "JMLR 9. The latent-space projections in results/ use t-SNE."
+  - type: conference-paper
+    title: "Rethinking the Inception Architecture for Computer Vision"
+    authors:
+      - family-names: "Szegedy"
+        given-names: "Christian"
+      - family-names: "Vanhoucke"
+        given-names: "Vincent"
+      - family-names: "Ioffe"
+        given-names: "Sergey"
+      - family-names: "Shlens"
+        given-names: "Jonathon"
+      - family-names: "Wojna"
+        given-names: "Zbigniew"
+    year: 2016
+    notes: "CVPR 2016. InceptionV3 provides the feature space for all FID computations here."
+  - type: conference-paper
+    title: "Deep Residual Learning for Image Recognition"
+    authors:
+      - family-names: "He"
+        given-names: "Kaiming"
+      - family-names: "Zhang"
+        given-names: "Xiangyu"
+      - family-names: "Ren"
+        given-names: "Shaoqing"
+      - family-names: "Sun"
+        given-names: "Jian"
+    year: 2016
+    notes: "CVPR 2016. ResNet-18 is the downstream classifier in the filling-rate sweep."
+  - type: conference-paper
+    title: "Very Deep Convolutional Networks for Large-Scale Image Recognition"
+    authors:
+      - family-names: "Simonyan"
+        given-names: "Karen"
+      - family-names: "Zisserman"
+        given-names: "Andrew"
+    year: 2015
+    notes: "ICLR 2015. VGG19 is the frozen feature extractor for the perceptual loss."

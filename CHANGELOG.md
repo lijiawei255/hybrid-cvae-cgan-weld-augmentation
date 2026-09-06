@@ -9,7 +9,30 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
-## [Unreleased] - v0.2.0 candidate
+## [Unreleased]
+
+### Added
+
+- **Explicit out-of-scope statement** in `README.md` ("Scope: what this repo
+  deliberately does NOT reproduce"): the journal extension's physics-guided
+  generation and its temporal/sequence augmentation are not reproduced (static
+  weld images carry no thermal or temporal signal to condition on); the reported
+  runs do not include the paper's FFT denoising step; the papers' DR/MDR metrics
+  are undefined on LoHi-WELD because it has no non-defect class.
+- **Structure-vs-objective clarification**: training structure follows the
+  conference paper, the adversarial objective follows the journal extension.
+- **Encoder conv-body deviation stated explicitly** (plain 4x4 stride-2 blocks vs
+  the papers' 3x3 residual blocks; discriminator differs only by omitted
+  dropout), with the note that topology is not a claimed contribution of either
+  paper and the module signatures make swapping drop-in.
+- **Implementation-component citations** in `CITATION.cff`: Heusel et al. (FID),
+  van der Maaten & Hinton (t-SNE), Szegedy et al. (InceptionV3), He et al.
+  (ResNet-18), Simonyan & Zisserman (VGG19), grouped separately from the
+  reproduced papers and datasets.
+- **LoHi-WELD provenance note** in `DATA_SOURCES.md`: its repository is built on
+  WongKinYiu's YOLOv7; only the dataset and annotations are used here.
+
+## v0.2.0 - 2026-09-06 (commit 1b68788)
 
 ### Why this release re-did the model
 

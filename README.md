@@ -279,6 +279,37 @@ Read this before quoting any number from this repo.
   honest reading of the papers' "real, unseen images"; it also means the reported
   gain, if any, is not inflated by test-set information.
 
+### Scope: what this repo deliberately does NOT reproduce
+
+- **The journal extension's physics-guided generation is out of scope.** Its
+  contribution beyond the conference paper is thermodynamic/boundary constraints
+  on the generated melt-pool signal. Static weld images carry no thermal or
+  temporal signal to condition on, so those constraints are not implementable
+  here and were not attempted. This repo borrows only the journal's GAN objective
+  (hinge + spectral normalisation) and a few hyperparameter details.
+- **Temporal/sequence augmentation is out of scope.** The journal augments and
+  evaluates 21-frame sequences; this repo generates and evaluates single frames,
+  because both substitute datasets are static images.
+- **The reported runs do not include the paper's FFT denoising step.** It is
+  implemented (`--fft_denoise`) but off: measured unnecessary on RIAWELC and
+  untested on LoHi-WELD. So the v0.2.0 numbers describe the pipeline *without*
+  that preprocessing step.
+- **Structure vs objective come from different papers.** The training structure
+  (single-phase joint model, Sub-Pixel decoder, 70 epochs, lr 1e-3) follows the
+  conference paper; the adversarial objective (hinge + spectral normalisation)
+  follows the journal extension, because BCE proved unstable at this data scale.
+- **The encoder conv body is a documented deviation.** We use plain 4x4 stride-2
+  blocks with BatchNorm where the papers use 3x3 residual blocks with max pooling
+  (conference) or GroupNorm (journal); only the aggregation (1x1 reduction +
+  pooling) is aligned. The discriminator matches the conference topology and
+  differs only by omitted dropout. Conv topology is not one of the papers'
+  claimed contributions and they do not ablate it, so any quality difference
+  cannot be attributed to it; the module signatures make swapping the blocks a
+  drop-in change for anyone needing exact architectural parity.
+- **The papers' DR/MDR metrics are not reported.** They are defect-vs-normal
+  rates; LoHi-WELD's four classes are all defect types with no non-defect class,
+  so those rates are undefined here. Per-class recall is the closest analogue.
+
 ## Reusing this work
 
 Want to generate your own training data? Prepare class-folder images (or pull
@@ -294,8 +325,11 @@ Code: [MIT](LICENSE). Third-party datasets remain under their own licenses.
 ## How to cite
 
 If this re-implementation helps your work, cite the **original papers** and the
-**datasets** rather than this repo. GitHub's "Cite this repository" widget and
-[`CITATION.cff`](CITATION.cff) list all five entries.
+**datasets** rather than this repo. [`CITATION.cff`](CITATION.cff) lists two
+groups: the reproduced papers plus every dataset's required citations (cite
+these), and a second group of implementation-component references - FID, t-SNE,
+InceptionV3, ResNet-18, VGG19 - listed for attribution of the components this
+repo uses in its analyses and backbones.
 
 ```bibtex
 % --- Primary method reference (conference paper being re-implemented) ---
