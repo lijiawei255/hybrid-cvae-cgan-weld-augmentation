@@ -4,15 +4,15 @@
 Output layout mirrors the real dataset so FID evaluation and downstream
 augmentation can consume it directly:
 
-    out_root/class_0/gen_0_00000.png
-    out_root/class_1/gen_1_00000.png
+    out_root/class_0/gen_0_000000.png
+    out_root/class_1/gen_1_000000.png
     ...
 
 Images are written straight from the decoder's sigmoid output, i.e. already in
 [0, 1]; there is no Tanh rescale anywhere in this pipeline.
 
 Counts can be given uniformly (--per_class) or per class **by name**
-(--counts "CR=560,PO=400"). Names are checked against the class list stored in
+(--counts "pore=560,deposit=450"). Names are checked against the class list stored in
 the checkpoint, so a dataset with a different class order cannot silently
 generate into the wrong folders. Filenames are zero-padded and generated in a
 fixed seed order, which makes the sorted file list a stable prefix ordering -
@@ -32,7 +32,7 @@ from models import Decoder
 
 
 def parse_counts(text, classes):
-    """'CR=560,PO=400' -> {label_index: count}, validated against `classes`."""
+    """'pore=560,deposit=450' -> {label_index: count}, validated against `classes`."""
     from data import parse_name_counts
 
     name_to_label = {name: i for i, name in enumerate(classes)}
@@ -81,7 +81,7 @@ def main():
     ap.add_argument("--per_class", type=int, default=0,
                     help="uniform count for every class (ignored if --counts is given)")
     ap.add_argument("--counts", default="",
-                    help="per-class counts by NAME, e.g. 'CR=560,PO=400,ND=300,LP=0'")
+                    help="per-class counts by NAME, e.g. 'deposit=450,discontinuity=300,pore=560,stain=0'")
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()

@@ -4,9 +4,10 @@
 Two conventions here are dictated by the reproduced paper and are relied on by
 every other module - keep them consistent if you change them:
 
-* Images are **grayscale** and live in **[0, 1]**. The paper's decoder ends in a
-  sigmoid producing [0, 1], so there is no Tanh-style rescaling to [-1, 1]
-  anywhere in this pipeline.
+* Images live in **[0, 1]**. The paper's decoder ends in a sigmoid producing
+  [0, 1], so there is no Tanh-style rescaling to [-1, 1] anywhere in this
+  pipeline. The channel count is a parameter (`channels`): the papers' camera
+  produced grayscale, while the current primary dataset keeps native RGB.
 * Class subsets are requested **by class name**, never by index. Hardcoding
   indices silently samples the wrong classes on any other dataset.
 """
@@ -200,7 +201,7 @@ def balanced_sample_weights(labels):
 
 
 def parse_name_counts(text):
-    """Parse 'CR=40,PO=200,ND=300' into {'CR': 40, 'PO': 200, 'ND': 300}.
+    """Parse 'pore=40,deposit=150' into {'pore': 40, 'deposit': 150}.
 
     Shared by every script that takes per-class counts, so class identity is
     always expressed by name and validated against the dataset in use.

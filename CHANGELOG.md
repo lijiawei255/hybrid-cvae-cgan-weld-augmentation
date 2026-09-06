@@ -49,26 +49,39 @@ them. This file keeps only the conclusions.
   paper's headline 96.79% is not a target for this repo and must not be quoted as
   one. Section 9 records the measured journal-extension arm, including that its
   discriminator hinge loss moves to a median of 1.998 - matching the paper's
-  "approximately constant value around 2.0" - and including two explicit
-  qualifications: that arm changed two variables at once, and its FID got worse
-  while its reconstruction improved. Section 10 records that the downstream
-  classifier is not bit-reproducible on GPU and scores the final epoch.
+  "approximately constant value around 2.0" - and listing four things the
+  measurement does not establish: it does not isolate the remaining three
+  configuration changes, "better generator" holds only on the reconstruction axis
+  because FID did not follow, the GroupNorm aggregate has three seeds while the
+  control has one, and the absolute scores stay non-comparable to the papers'.
+  Section 10 records that the downstream classifier is not bit-reproducible on GPU
+  and scores the final epoch.
 - **Section 1 addendum withdrawing an earlier explanation.** The claim that a
   low-information latent is why our generations lack fidelity is withdrawn as
   unsupported: `latent_dim x kl` is already at the paper's reported magnitude
   under either reading of its normalisation.
-- **Downstream sweep for the journal-extension configuration** (seed 42,
-  `runs/sweep_paper2_s42`), which **reverses the published v0.2.0 finding that
-  balance-to-max does not transfer**. At r=1.0 macro-F1 is 0.7168 against this
-  arm's own 0.6848 real-only baseline (+0.032) where the published curve had
-  0.6418 against 0.6936 (-0.052, its worst ratio); pore F1 is 0.5053 against the
-  published 0.3871. Across the four ratios that completed cleanly the curve is
-  monotone increasing, the shape the journal paper reports. Recorded with four
-  caveats in `docs/CALIBRATION.md` section 9 and behind a superseded banner in
-  both READMEs rather than by editing the published table: the new configuration
-  differs from v0.2.0 in five respects at once, the matched latent-128 BatchNorm
-  control has not been swept, its r=0.25 arm was invalidated by a final-epoch
-  loss spike, and it is a single seed. FID at each arm's own best-validation epoch
+- **Downstream sweep for the journal-extension configuration** at three seeds
+  (`runs/sweep_paper2_s42`, `_s43`, `_s44`), which **reverses the published v0.2.0
+  finding that balance-to-max does not transfer**. At r=1.0 mean macro-F1 is
+  0.7185 +/- 0.0019 against this arm's own 0.6785 +/- 0.0447 real-only mean
+  (+0.0399) where the published curve had 0.6418 against 0.6936 (-0.052, its worst
+  ratio); mean pore F1 is 0.4658 +/- 0.0475 against 0.3527 +/- 0.0611 (+0.1132).
+  The per-seed r=1.0 macro-F1 deltas are +0.0321, +0.0895 and -0.0018, so it is a
+  positive mean effect rather than a gain on every seed. The **matched latent-128
+  BatchNorm, unweighted-sampler control** (`runs/sweep_ctrl_s42_clean`) preserves
+  that sign flip - r=1.0 macro-F1 0.7009 against its own 0.6332 baseline (+0.0677),
+  pore F1 0.4222 against 0.4000 - so GroupNorm and the weighted sampler are **not
+  required** for it. Neither curve is monotone and neither peaks uniquely at r=1.0:
+  the GroupNorm arm's highest complete-seed mean is r=0.50 (0.7210 +/- 0.0246) and
+  the control peaks at r=0.75 (0.7124). Recorded in `docs/CALIBRATION.md` section 9
+  and behind a superseded banner in both READMEs rather than by editing the
+  published table, with four things it does not establish: it does not isolate the
+  remaining three configuration changes (`latent_dim` 32 -> 128, `kl_weight` 0.015
+  -> 0.059, early stopping at 25 epochs -> the full 70), "better generator" holds
+  only on the reconstruction axis, the control has one seed against the GroupNorm
+  arm's three, and the absolute scores stay non-comparable to the papers'. The
+  seed-42 r=0.25 arm was invalidated by a final-epoch loss spike, so that ratio
+  aggregates two seeds. FID at each arm's own best-validation epoch
   is effectively unchanged against v0.2.0 (215.99 vs 216.87) even though best
   `val_recon` improved 2.8x (0.0177 vs 0.0494), so "better generator" holds on the
   reconstruction axis only. Taking the minimum FID over each run instead reverses
@@ -77,6 +90,30 @@ them. This file keeps only the conclusions.
   `docs/CALIBRATION.md` section 9, because FID is a diagnostic here rather than an
   acceptance criterion and its direction depends on which pair and statistic is
   used.
+- **Seed-aggregated filling-rate figure** `results/filling_rate_multiseed.png`,
+  produced by the new `src/make_multiseed_figure.py`. It reads only the three
+  `sweep_metrics.csv` files, so it needs neither a GPU nor the dataset, and its
+  band is the sample standard deviation (ddof=1) so the figure cannot disagree
+  with the `docs/CALIBRATION.md` section 9 table. `--exclude` drops the invalid
+  seed-42 r=0.25 arm from the aggregate without removing that ratio from the other
+  two seeds, which the figure annotates `n=2`; an `--exclude` that matches nothing
+  is an error rather than a silent no-op.
+- **Per-figure provenance table in both READMEs.** Every file in `results/` now
+  states which run produced it, because the sweep the READMEs report is the
+  three-seed re-run while most committed figures still come from the published
+  v0.2.0 runs. In particular `filling_rate_curve.png` was labelled "the sweep
+  above", which after the re-run pointed at the wrong sweep.
+
+### Changed
+
+- **Committed showcase grids regenerated** from the recommended
+  `runs/paper2_gn_wrs` generator instead of the v0.2.0 `runs/joint_lohi` one, so
+  the images a clone user sees match the configuration the READMEs recommend. The
+  v0.2.0 versions are kept as `results/v0.2.0_*.png` rather than deleted; their
+  generated rows are near-identical within each class, which is the mode collapse
+  the recommended config reduces. The grids are sampled into a showcase-only pool
+  with all four classes, separate from the `generated_paper2` sweep pool, whose
+  `stain=0` is required by balance-to-max and checked by `verify_generation_meta`.
 
 ### Fixed
 
@@ -101,6 +138,51 @@ them. This file keeps only the conclusions.
 - **The README's noise caveat was a guess.** "Treat differences under ~0.02
   macro-F1 as noise" is replaced with the measured spread from repeating an
   unchanged arm at the same seed: pore F1 moved 0.034, macro-F1 0.009.
+- **README prep command could not produce the advertised crops.** Both READMEs'
+  Data sections pointed `--input_root` at the archive root, which also contains
+  the 2,000 low-resolution beads; the documented 8,012 crops come from
+  `<archive>/weld-dataset/high_resolution_welds` with `--min_side 16`, as
+  `DATA_SOURCES.md` and the preparation record already showed. Fixed in both
+  languages, with the reason for taking only that subset stated.
+- **Stale "in press" citation completed.** The RIAWELC-required Perri et al.,
+  *Manufacturing Letters* paper has been published since January 2023
+  (vol. 35, pp. 29-32, DOI 10.1016/j.mfglet.2022.11.006; verified via Crossref),
+  so `CITATION.cff`, both READMEs' BibTeX and `DATA_SOURCES.md` now carry the
+  real details instead of the deliberate "assert nothing" placeholder. The
+  conference paper's pages (1-6) and LoHi-WELD's volume and pages (12,
+  77442-77453) are filled in at the same places.
+- **`DATA_SOURCES.md` was unreachable from the published docs.** No committed
+  `.md` linked it once the provenance moved into the READMEs, so its (correct)
+  prep command sat next to a diverging (wrong) README copy. Both READMEs now
+  link it from the Data section, and their License sections state that the
+  committed `results/` figures are LoHi-WELD derivatives and stay subject to
+  that dataset's citation requirement alongside the repo's MIT license.
+- **Misleading "Real"/"Generated" column headers on the showcase figures.** The
+  grids alternate real/generated by row, but both figure scripts drew headers at
+  25%/75% of the width implying "left half real, right half generated" - the
+  opposite of the actual layout. Replaced with a row-order caption
+  (`src/make_comparison.py`, `src/make_class_figures.py`), pinned by the new
+  `check_comparison_grid_labels` smoke check, and the five committed figures
+  regenerated from the same showcase pool (per-class FIDs unchanged: 198.82 /
+  224.86 / 185.87 / 222.45).
+- **Stale RIAWELC class names in `--help` and docstrings.** Seven
+  argparse/docstring examples used `CR=..,PO=..` names that raise `KeyError`
+  against the documented `data/lohi` root; they now use the LoHi-WELD subset and
+  sweep pools (`train_joint.py`, `train_classifier.py`, `make_paper_figures.py`,
+  `generate.py`, `data.py`). `make_class_figures.py` also lost its dead
+  RIAWELC-only `CLASS_DESCRIPTIONS` dict, whose `.get` fallback silently
+  stripped the description from every current figure title.
+- **Grayscale invariant and related doc drift.** `data.py`, `models.py` and
+  `smoke_test.py` claimed a single-channel grayscale invariant the code does not
+  have (the channel count is a parameter and the tests assert the RGB path);
+  `train_classifier.py` said "static radiographs" where the primary experiment
+  is visible-light weld beads; `models.py`'s header now also credits the
+  journal-extension components it hosts; `train_joint.py` no longer reads as if
+  `--d_norm group`/`--monitor val_recon` were defaults; `generate.py`'s layout
+  example matches its six-digit filenames; `make_paper_figures.py --channels`
+  default changed 1 -> 3 to match the other scripts and the documented commands.
+- **Duplicate `.gitignore` entries** (`papers/` and `REPRODUCTION_GUIDE.md`
+  each listed twice) collapsed to one block.
 
 ## v0.2.0 - 2026-09-06 (commit 1b68788)
 

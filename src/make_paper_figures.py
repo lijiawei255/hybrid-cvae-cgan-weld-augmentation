@@ -149,6 +149,77 @@ def save_filling_rate_curve(sweep, class_names, output):
     _save(fig, output)
 
 
+def aggregate_seed_metrics(seeds, metric):
+    """[{ratio: {metric: value}}, ...] -> {ratio: (mean, sample std, n seeds)}.
+
+    The spread is the sample standard deviation (ddof=1), the same convention as
+    the table in docs/CALIBRATION.md section 9, so the plotted band and the
+    tabulated +/- values cannot disagree. A ratio with one seed has no sample
+    std and reports 0.0 rather than NaN.
+
+    A ratio reported by only some seeds still aggregates over the seeds that have
+    it: an arm excluded for a training fault must not delete its ratio from the
+    figure, or the curve would silently change shape.
+    """
+    per_ratio = {}
+    for sweep in seeds:
+        for ratio, metrics in sweep.items():
+            if metric in metrics:
+                per_ratio.setdefault(float(ratio), []).append(float(metrics[metric]))
+    if not per_ratio:
+        raise ValueError(f"no seed reports metric {metric!r}")
+    return {ratio: (float(np.mean(values)),
+                    float(np.std(values, ddof=1)) if len(values) > 1 else 0.0,
+                    len(values))
+            for ratio, values in per_ratio.items()}
+
+
+def save_multi_seed_filling_rate(seeds, references, minority, output):
+    """Seed-aggregated filling-rate curve against labelled reference arms.
+
+    The single-seed curve cannot distinguish a real effect from seed noise, so the
+    mean carries a +/- 1 std band and any ratio with fewer seeds is marked.
+    """
+    ref_colors = ["tab:orange", "tab:green", "tab:purple", "tab:brown"]
+    panels = [("macro_f1", "macro-F1"),
+              (f"f1:{minority}", f"{minority} F1 (minority class)")]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
+
+    for ax, (metric, label) in zip(axes, panels):
+        agg = aggregate_seed_metrics(seeds, metric)
+        ratios = sorted(agg)
+        mean = np.array([agg[r][0] for r in ratios])
+        std = np.array([agg[r][1] for r in ratios])
+        counts = [agg[r][2] for r in ratios]
+        full = max(counts)
+
+        ax.plot(ratios, mean, "-o", ms=4, color="tab:blue",
+                label=f"GroupNorm + balanced sampler, mean of {full} seeds")
+        ax.fill_between(ratios, mean - std, mean + std, color="tab:blue", alpha=0.18,
+                        label="$\\pm$1 sample std over seeds")
+        for ratio, value, count in zip(ratios, mean, counts):
+            if count < full:
+                ax.annotate(f"n={count}", (ratio, value), textcoords="offset points",
+                            xytext=(0, 9), ha="center", fontsize=7, color="tab:red")
+
+        for color, (name, sweep) in zip(ref_colors, references.items()):
+            ref_ratios = sorted(r for r in sweep if metric in sweep[r])
+            ax.plot(ref_ratios, [sweep[r][metric] for r in ref_ratios], "--s", ms=3.5,
+                    lw=1.1, color=color, label=name)
+
+        ax.set_xlabel("filling rate (fraction of the gap to $N_{max}$ closed)")
+        ax.set_ylabel(label)
+        ax.set_title(label)
+        ax.set_xticks(ratios)
+        ax.grid(alpha=0.25)
+        ax.legend(frameon=False, fontsize=7.5)
+
+    fig.suptitle("Filling-rate sensitivity across seeds, against single-seed reference arms",
+                 y=0.995)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    _save(fig, output)
+
+
 # --------------------------------------------------------------------------- #
 # confusion matrices
 # --------------------------------------------------------------------------- #
@@ -286,11 +357,11 @@ def main():
     ap.add_argument("--sweep", required=True, help="sweep_metrics.csv from train_classifier.py")
     ap.add_argument("--cm_dir", required=True, help="directory holding cm_r*.npy")
     ap.add_argument("--subset", required=True,
-                    help="the real subset the generator was trained on, e.g. 'CR=40,PO=200,ND=300,LP=600'")
+                    help="the real subset the generator was trained on, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'")
     ap.add_argument("--cm_ratios", default="0.0,1.0",
                     help="which two filling rates to compare in the confusion-matrix figure")
     ap.add_argument("--img_size", type=int, default=224)
-    ap.add_argument("--channels", type=int, default=1)
+    ap.add_argument("--channels", type=int, default=3)
     ap.add_argument("--fft_denoise", action="store_true")
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
     ap.add_argument("--test_frac", type=float, default=0.2)

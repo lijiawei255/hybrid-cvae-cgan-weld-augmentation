@@ -131,10 +131,11 @@ nothing changes unless you ask for it.
   therefore changes meaning as beta ramps.
 
 Enabling `--d_norm group --weighted_sampler` together is the configuration
-measured in `docs/CALIBRATION.md` section 9. Read the two qualifications there
-before reusing the numbers: that arm changed both variables at once, so neither
-effect is separately attributed, and its FID got worse while its reconstruction
-improved.
+measured in `docs/CALIBRATION.md` section 9. Read the four things that
+measurement does **not** establish before reusing the numbers. In particular, a
+matched BatchNorm, unweighted-sampler control reproduces the same positive r=1.0
+result, so neither switch is *required* for it, and neither switch's separate
+contribution is estimated.
 
 ### Recommended configuration
 
@@ -252,16 +253,38 @@ Two findings, reported as measured:
 > benefit; the control is one seed. Full tables and limitations:
 > `docs/CALIBRATION.md` section 9.
 
-Figures in `results/`: `filling_rate_curve.png` (the sweep above),
-`training_curves.png` (loss components and FID per epoch),
-`reconstruction_comparison.png` (real / reconstruction / generated),
-`latent_tsne.png` (encoder latent projection), `confusion_matrices.png`
-(r=0 vs r=1), `class_distribution.png`, plus per-class close-ups
-(`class_*.png`) and the real-vs-generated grid (`real_vs_generated.png`).
+Figures in `results/`. **Each one belongs to a specific run** - the sweep reported
+above is the only three-seed result, and only one figure shows it:
+
+| figure | run it was produced from |
+|---|---|
+| `filling_rate_multiseed.png` | the three-seed GroupNorm + balanced-sampler sweep reported above, against the two single-seed reference arms |
+| `filling_rate_curve.png` | the **published v0.2.0 single-seed** sweep (`runs/sweep`), i.e. the five-row table at the top of this section - not the three-seed numbers in the note above |
+| `training_curves.png`, `reconstruction_comparison.png`, `latent_tsne.png` | the published v0.2.0 generator (`runs/joint_lohi`) |
+| `confusion_matrices.png` (r=0 vs r=1), `class_distribution.png` | the published v0.2.0 sweep |
+| `real_vs_generated.png`, `class_*.png` | the recommended `runs/paper2_gn_wrs` generator (see showcase below) |
+
+Reproduce commands for the first and last rows: `docs/CALIBRATION.md` section 9.
+
+![Seed-aggregated filling-rate curve](results/filling_rate_multiseed.png)
+
+The band is ±1 sample standard deviation over the three seeds; `n=2` marks r=0.25,
+where the seed-42 arm is excluded for a final-epoch loss spike. The three-seed mean
+clears both dashed single-seed reference arms at r=0.5 and r=1.0 only - at r=0 and
+r=0.75 both references sit above it - so the figure supports the r=1.0 reading, not
+a ratio-by-ratio ranking of the three configurations.
 
 **Committed LoHi-WELD showcase.** These checked-in examples let clone users see
 the current output format without the dataset; they are qualitative examples,
-not additional evaluation evidence.
+not additional evaluation evidence. They come from the **recommended**
+GroupNorm + balanced-sampler generator, `runs/paper2_gn_wrs/joint.pt`, sampled at
+seed 42 into a showcase-only pool of 300 images per class - separate from the
+`generated_paper2` sweep pool, which carries `stain=0` because balance-to-max
+needs no stain images. The per-class FID printed on each close-up is an intra-repo
+diagnostic on the same scale as everything else here, not a literature-comparable
+score. The earlier v0.2.0 versions of these five figures are kept alongside as
+`results/v0.2.0_*.png`; their generated rows are visibly near-identical within a
+class, which is the mode collapse the recommended config reduces.
 
 ![LoHi-WELD real versus generated samples](results/real_vs_generated.png)
 
@@ -336,6 +359,7 @@ src/generate.py           class-conditional sampling, counts by class name
 src/eval_fid.py           FID (InceptionV3 features) + input normalisation
 src/train_classifier.py   downstream filling-rate sweep (from-scratch ResNet-18)
 src/make_paper_figures.py training curves, sensitivity curve, t-SNE, confusions
+src/make_multiseed_figure.py seed-aggregated sensitivity curve, from CSVs alone
 src/make_comparison.py    real-vs-generated comparison grid into results/
 src/make_class_figures.py compact per-class close-ups with per-class FID
 src/smoke_test.py         unit checks + end-to-end run on synthetic data
@@ -353,14 +377,14 @@ imbalance - close to the conference paper's 14.7x.
 It ships as detection data (image + YOLO label pairs), so
 `src/prepare_yolo_crops.py` crops each annotated box into class folders; that
 crop is also the papers' ROI-extraction preprocessing step. After downloading
-LoHi-WELD, prepare it with:
+LoHi-WELD, prepare only the `high_resolution_welds` subset (the low-resolution
+beads' boxes are too small to carry usable signal once upscaled):
 
 ```bash
 python src/prepare_yolo_crops.py \
-  --input_root /path/to/LoHi-WELD \
-  --out_root data/lohi \
-  --classes "pore,deposit,discontinuity,stain" \
-  --img_size 224 --channels 3 --margin 0.1
+  --input_root <archive>/weld-dataset/high_resolution_welds \
+  --out_root data/lohi --img_size 224 --channels 3 --min_side 16 \
+  --classes "pore,deposit,discontinuity,stain"
 ```
 
 This produces 8,012 crops: deposit 1,193, discontinuity 2,975, pore 304,
@@ -376,7 +400,9 @@ subfolders.
 
 No dataset is bundled here, and none should ever be committed - `data/`,
 `generated/`, `runs/` and `*.pt` are git-ignored by design. Download links and
-license terms are on each dataset's own repository page.
+license terms are on each dataset's own repository page; full provenance,
+terms and alternatives are recorded in
+[`DATA_SOURCES.md`](DATA_SOURCES.md).
 
 ## Limitations and honest caveats
 
@@ -412,8 +438,11 @@ Read this before quoting any number from this repo.
   minimax, because the unbounded BCE term destroyed reconstruction at this data
   scale. Evidence and reproduction commands:
   [`docs/CALIBRATION.md`](docs/CALIBRATION.md).
-- **Single seed.** Every reported number is one run at seed 42. GAN training at
-  this scale is noisy; treat differences under a few points as within noise.
+- **Mostly single seed.** The published v0.2.0 table is one run at seed 42, as is
+  the matched BatchNorm control. Only the GroupNorm + weighted-sampler re-run has
+  three generator/pool/classifier seeds (42/43/44), and its r=0.25 ratio has two
+  after the seed-42 loss spike. GAN training at this scale is noisy; treat
+  differences under a few points as within noise.
 - **Leakage-free by construction.** The generator never sees the classifier's
   held-out test images. This is stricter than strictly necessary and is the
   honest reading of the papers' "real, unseen images"; it also means the reported
@@ -464,6 +493,8 @@ this repo is appreciated but not required.
 ## License
 
 Code: [MIT](LICENSE). Third-party datasets remain under their own licenses.
+The committed figures in `results/` are derived from LoHi-WELD imagery, so
+they stay subject to that dataset's citation requirement as well.
 
 ## How to cite
 
@@ -486,6 +517,7 @@ repo uses in its analyses and backbones.
   address   = {Shanghai, China},
   month     = jul,
   year      = {2025},
+  pages     = {1--6},
   doi       = {10.1109/CYBER67662.2025.11168313}
 }
 
@@ -522,8 +554,10 @@ repo uses in its analyses and backbones.
   author  = {Perri, Stefania and Spagnolo, Fanny and Frustaci, Fabio and
              Corsonello, Pasquale},
   journal = {Manufacturing Letters},
-  note    = {In press, Elsevier. Recorded as "in press" by the RIAWELC
-             repository, so no year, volume or pages are asserted here}
+  volume  = {35},
+  pages   = {29--32},
+  year    = {2023},
+  doi     = {10.1016/j.mfglet.2022.11.006}
 }
 
 % --- Visible-light weld defect dataset intended as the primary experiment ---
@@ -534,6 +568,8 @@ repo uses in its analyses and backbones.
   author  = {Block, Sylvio Biasuz and Dutra da Silva, Ricardo and
              Lazzaretti, Andre Eugenio and Minetto, Rodrigo},
   journal = {IEEE Access},
+  volume  = {12},
+  pages   = {77442--77453},
   year    = {2024},
   doi     = {10.1109/ACCESS.2024.3407019}
 }

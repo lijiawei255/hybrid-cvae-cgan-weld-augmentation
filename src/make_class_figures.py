@@ -23,13 +23,6 @@ from augment import generated_by_class
 from data import ClassFolderDataset, ListDataset, make_splits
 from eval_fid import _features, _stats, fid_from_stats
 
-CLASS_DESCRIPTIONS = {
-    "CR": "cracks",
-    "LP": "lack of penetration",
-    "ND": "no defect",
-    "PO": "porosity",
-}
-
 
 def load_row(files, per_row, img_size, seed):
     """At most per_row images from an explicit file list; never padded."""
@@ -104,12 +97,8 @@ def main():
         H = header_h + 2 * s + g + stats_h
         canvas = Image.new("RGB", (W, H), (255, 255, 255))
         draw = ImageDraw.Draw(canvas)
-        desc = CLASS_DESCRIPTIONS.get(cname, "")
-        title = f"{cname} ({desc})" if desc else cname
-        draw.text((8, 5), title, fill=(0, 0, 0), font=font)
-        draw.text((label_w + (W - label_w) * 0.25 - 24, 5), "Real",
-                  fill=(90, 90, 90), font=small)
-        draw.text((label_w + (W - label_w) * 0.75 - 52, 5), "Generated",
+        draw.text((8, 5), cname, fill=(0, 0, 0), font=font)
+        draw.text((label_w, 8), "top row real, bottom row generated",
                   fill=(90, 90, 90), font=small)
         y = header_h
         for row, label in ((real_imgs, "Real"), (gen_imgs, "Gen")):
