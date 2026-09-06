@@ -73,6 +73,18 @@ Real vs. generated samples per class (upper row real, lower row generated):
 
 ![Real vs generated samples](results/real_vs_generated.png)
 
+Per-class close-ups (top row real, bottom row generated; the number in each
+caption is that class's FID — lower is better; the normalization is
+non-standard, so compare classes only against each other, not against
+literature values):
+
+| CR (cracks), FID 71.9 | LP (lack of penetration), FID 63.5 |
+|---|---|
+| ![CR close-up](results/class_CR.png) | ![LP close-up](results/class_LP.png) |
+| **PO (porosity), FID 83.5** | **ND (no defect), FID 14.7** |
+| ![PO close-up](results/class_PO.png) | ![ND close-up](results/class_ND.png) |
+
+
 ## Repository layout
 
 ```
@@ -84,6 +96,7 @@ src/generate.py         class-conditional sampling
 src/eval_fid.py         FID evaluation (InceptionV3 features)
 src/train_classifier.py downstream augmentation-gain experiment (ResNet-18)
 src/make_comparison.py  real-vs-generated comparison grid into results/
+src/make_class_figures.py compact per-class close-ups with per-class FID
 src/smoke_test.py       end-to-end sanity check on synthetic data
 ```
 

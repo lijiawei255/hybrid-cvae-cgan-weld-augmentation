@@ -19,6 +19,10 @@ reproduction guide (its Appendix A) are documented here.
   row pair per class, the standard qualitative GAN presentation) into
   `results/`, for the README and for anyone pulling the repository to see
   what the pipeline's output looks like.
+- `src/make_class_figures.py`: renders compact per-class real-vs-generated
+  close-ups with the per-class FID in the caption (computed with the same
+  InceptionV3 features as `src/eval_fid.py`), sized to stay readable when
+  pasted directly into a chat window.
 
 ### Changed
 
@@ -46,6 +50,9 @@ reproduction guide (its Appendix A) are documented here.
   this implementation feeds [0,1] images without ImageNet normalization, so
   absolute values are not comparable to literature FIDs; treat as a trend
   indicator only.
+- Per-class FID: CR 71.87, LP 63.50, ND 14.71, PO 83.49. The no-defect class
+  is by far the easiest (smooth, uniform texture); porosity is the hardest
+  (small blob-shaped indications).
 - Downstream augmentation-gain experiment (pretrained ResNet-18, stratified
   real-only test split, seed 42): condition A (imbalanced real, ~7.7k)
   99.36% accuracy / macro-F1 0.9931; condition B (A + 3,000 generated)
