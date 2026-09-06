@@ -163,7 +163,7 @@ def save_confusion_matrices(class_names, condition_a, condition_b, output,
                             labels=("r = 0.0: real only", "r = 1.0: balance-to-max")):
     """Side-by-side row-normalised confusion matrices for two conditions."""
     matrices = [normalize_confusion_matrix(condition_a), normalize_confusion_matrix(condition_b)]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
     image = None
     for axis, matrix, title in zip(axes, matrices, labels):
         image = axis.imshow(matrix, vmin=0, vmax=1, cmap="Blues")
@@ -175,11 +175,12 @@ def save_confusion_matrices(class_names, condition_a, condition_b, output,
             axis.text(column, row, f"{matrix[row, column]:.2f}", ha="center", va="center",
                       color="white" if matrix[row, column] > 0.5 else "black")
     axes[0].set_ylabel("true class")
-    fig.colorbar(image, ax=axes, label="row-normalized recall")
     fig.suptitle("Held-out real-test confusion matrices")
-    # A shared colorbar makes the axes incompatible with tight_layout, which would
-    # emit a UserWarning; position them explicitly instead.
-    fig.subplots_adjust(top=0.82, bottom=0.2, wspace=0.15)
+    # Reserve the right-hand gutter BEFORE creating the colorbar: creating it first
+    # and adjusting afterwards leaves the colorbar positioned over the right matrix.
+    # tight_layout is avoided because a shared colorbar makes it emit a UserWarning.
+    fig.subplots_adjust(top=0.84, bottom=0.22, wspace=0.30, right=0.80)
+    fig.colorbar(image, ax=axes.tolist(), pad=0.02, label="row-normalized recall")
     _save(fig, output)
 
 

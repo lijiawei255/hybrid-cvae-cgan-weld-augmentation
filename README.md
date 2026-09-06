@@ -1,5 +1,10 @@
 # Hybrid CVAE-CGAN for WAAM Defect Image Augmentation (Unofficial Re-implementation)
 
+**Language / 语言:** English | [中文](README_zh-CN.md)
+
+> The English README is normative. The Chinese translation (`README_zh-CN.md`) is
+> maintained in sync with it; if the two ever diverge, the English version wins.
+
 An **unofficial, method-level re-implementation attempt** of the hybrid CVAE-CGAN framework proposed in:
 
 > Junle Yang, Lei Yuan, Haochen Mu, Fengyang He, Donghong Ding, Zengxi Pan, Huijun Li, *"Generation of WAAM Defect Images Using a Hybrid CVAE-CGAN: A Data Augmentation Strategy for Small and Imbalanced Datasets"*, Proc. 15th IEEE Int. Conf. on CYBER Technology in Automation, Control, and Intelligent Systems (CYBER 2025), Shanghai, China, 15-18 July 2025. DOI: [10.1109/CYBER67662.2025.11168313](https://doi.org/10.1109/CYBER67662.2025.11168313)

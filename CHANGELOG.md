@@ -13,6 +13,10 @@ them. This file keeps only the conclusions.
 
 ### Added
 
+- **Bilingual README.** `README_zh-CN.md` mirrors the English README for
+  Chinese-speaking readers; both files carry a navigation link at the top and a
+  sync note stating the English version is normative and the Chinese translation
+  is maintained in sync with it.
 - **Explicit out-of-scope statement** in `README.md` ("Scope: what this repo
   deliberately does NOT reproduce"): the journal extension's physics-guided
   generation and its temporal/sequence augmentation are not reproduced (static
@@ -31,6 +35,14 @@ them. This file keeps only the conclusions.
   reproduced papers and datasets.
 - **LoHi-WELD provenance note** in `DATA_SOURCES.md`: its repository is built on
   WongKinYiu's YOLOv7; only the dataset and annotations are used here.
+
+### Fixed
+
+- **Confusion-matrix figure overlap.** The shared colorbar was created before
+  `subplots_adjust`, so its position was computed from the pre-adjustment layout
+  and then the axes moved underneath it, covering the right matrix's third column
+  and title. The right-hand gutter is now reserved first (`right=0.80`) and the
+  colorbar created afterwards; `results/confusion_matrices.png` was redrawn.
 
 ## v0.2.0 - 2026-09-06 (commit 1b68788)
 
