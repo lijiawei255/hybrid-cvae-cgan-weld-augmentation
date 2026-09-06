@@ -34,6 +34,10 @@ dataset files to this repository or attach them to releases.
   pore 304 - an **11.6x** imbalance, close to the conference paper's 14.7x.
   Crops keep their native **RGB** channels: the papers' grayscale is a property
   of their camera, not of the method, and colour carries defect signal here.
+- **Provenance**: the LoHi-WELD repository is built on the YOLOv7 implementation
+  by WongKinYiu. This repo uses only the dataset and its annotations, not that
+  code, so no citation of it is required; the provenance is recorded here for
+  transparency.
 - **Terms**, as stated by the authors: the dataset and code "can be used for
   research, non-comercial or comercial purposes for free with proper citation".
   Citing the paper below is therefore a usage requirement.
