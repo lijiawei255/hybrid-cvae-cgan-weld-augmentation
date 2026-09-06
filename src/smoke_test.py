@@ -2,9 +2,10 @@
 """Smoke test: unit checks plus an end-to-end run on synthetic weld-like images.
 
 The unit checks pin down the contracts that are easy to break silently - the
-[0, 1] grayscale range, the leakage-free splits, the paper's loss weights, the
-FID input normalisation and numerics, and name-keyed class configuration. The
-end-to-end part then runs data loading -> joint CVAE-CGAN training -> generation.
+[0, 1] pixel range with selectable 1- or 3-channel input, the leakage-free
+splits, this repo's calibrated loss weights, the FID input normalisation and
+numerics, and name-keyed class configuration. The end-to-end part then runs
+data loading -> joint CVAE-CGAN training -> generation.
 
 It verifies code correctness only, NOT generation quality.
 """
@@ -164,7 +165,7 @@ def check_confusion_matrix_figure(tmp):
 
 
 def check_grayscale_dataset(tmp):
-    """Paper uses grayscale with a sigmoid decoder, so tensors are 1-channel in [0, 1]."""
+    """Sigmoid decoder means tensors are in [0, 1]; channels stay selectable (1 or 3)."""
     from data import ClassFolderDataset
 
     ds = ClassFolderDataset(str(tmp / "smoke_data"), img_size=64, channels=1)
@@ -291,9 +292,9 @@ def check_perceptual_loss():
 def check_fid_input_preprocessing():
     """InceptionV3 with transform_input=False wants [-1, 1] RGB at 299x299.
 
-    The pipeline stores [0, 1] grayscale, so both conversions have to happen.
-    Getting the range wrong does not raise - it just silently shifts every
-    activation off-distribution and makes FID incomparable.
+    The pipeline stores [0, 1] images (1- or 3-channel), so both conversions
+    have to happen. Getting the range wrong does not raise - it just silently
+    shifts every activation off-distribution and makes FID incomparable.
     """
     import torch
     from eval_fid import inception_input
@@ -480,6 +481,102 @@ def check_filling_rate_curve_figure(tmp):
     assert output.is_file() and output.stat().st_size > 0
 
 
+def check_multi_seed_filling_rate_figure(tmp):
+    """The multi-seed figure must aggregate over seeds, not over ratios.
+
+    Its whole purpose is to show that the r=1.0 gain is a positive *mean* effect
+    with visible seed spread, so a bug that averaged the wrong axis, or silently
+    dropped a ratio that one seed is missing, would invert the published reading.
+
+    The spread is the *sample* standard deviation (ddof=1), matching the table in
+    docs/CALIBRATION.md section 9; a figure drawn with population std would show
+    a narrower band than the numbers it illustrates.
+    """
+    from make_paper_figures import aggregate_seed_metrics, save_multi_seed_filling_rate
+
+    seeds = [{0.0: {"macro_f1": 0.60, "f1:pore": 0.30},
+              1.0: {"macro_f1": 0.70, "f1:pore": 0.40}},
+             {0.0: {"macro_f1": 0.70, "f1:pore": 0.50},
+              0.5: {"macro_f1": 0.65, "f1:pore": 0.35},
+              1.0: {"macro_f1": 0.80, "f1:pore": 0.60}}]
+
+    agg = aggregate_seed_metrics(seeds, "macro_f1")
+    assert sorted(agg) == [0.0, 0.5, 1.0], sorted(agg)
+
+    def close(got, mean, std, n):
+        return abs(got[0] - mean) < 1e-9 and abs(got[1] - std) < 1e-9 and got[2] == n
+
+    sample_std = 0.1 / 2 ** 0.5  # two values 0.1 apart
+    assert close(agg[0.0], 0.65, sample_std, 2), agg[0.0]
+    assert close(agg[1.0], 0.75, sample_std, 2), agg[1.0]
+    # 0.5 exists in one seed only: it aggregates from that seed, with no spread.
+    assert close(agg[0.5], 0.65, 0.0, 1), agg[0.5]
+
+    pore = aggregate_seed_metrics(seeds, "f1:pore")
+    assert close(pore[1.0], 0.50, 0.2 / 2 ** 0.5, 2), pore[1.0]
+
+    output = tmp / "filling_rate_multiseed.png"
+    save_multi_seed_filling_rate(
+        seeds,
+        references={"published v0.2.0 (seed 42)": {0.0: {"macro_f1": 0.6936,
+                                                         "f1:pore": 0.3778},
+                                                   1.0: {"macro_f1": 0.6418,
+                                                         "f1:pore": 0.3871}}},
+        minority="pore",
+        output=output,
+    )
+    assert output.is_file() and output.stat().st_size > 0
+
+
+def check_multi_seed_arm_exclusion():
+    """Excluding one invalid arm must drop that arm only, and never silently.
+
+    The seed-42 r=0.25 score in the section 9 sweep is invalid (final-epoch loss
+    spike), so the figure has to drop one (file, ratio) pair while keeping the
+    same ratio from the other seeds. Dropping it everywhere, or silently ignoring
+    a mistyped path or ratio, would reshape the curve with no warning.
+    """
+    from make_multiseed_figure import drop_arms
+
+    loaded = {"s42.csv": {0.0: {"macro_f1": 0.68}, 0.25: {"macro_f1": 0.73},
+                          1.0: {"macro_f1": 0.72}},
+              "s43.csv": {0.0: {"macro_f1": 0.63}, 0.25: {"macro_f1": 0.75},
+                          1.0: {"macro_f1": 0.72}}}
+
+    kept = drop_arms(loaded, ["s42.csv=0.25"])
+    assert sorted(kept["s42.csv"]) == [0.0, 1.0], sorted(kept["s42.csv"])
+    assert sorted(kept["s43.csv"]) == [0.0, 0.25, 1.0], sorted(kept["s43.csv"])
+    # The input must not be mutated: the caller still holds the unfiltered sweeps.
+    assert 0.25 in loaded["s42.csv"]
+
+    for bad in ["s99.csv=0.25", "s42.csv=0.6", "s42.csv"]:
+        try:
+            drop_arms(loaded, [bad])
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"--exclude {bad!r} matched nothing but was accepted")
+
+
+def check_comparison_grid_labels():
+    """The showcase grid alternates real/generated by row, so its caption must too.
+
+    The published figures drew "Real" and "Generated" as column headers at 25% and
+    75% of the width, which reads as "left half real, right half generated" - the
+    opposite of the actual layout, where every class contributes a real row and a
+    generated row.
+    """
+    from make_comparison import grid_caption, row_labels
+
+    assert row_labels(["pore", "stain"]) == [
+        "pore real", "pore gen", "stain real", "stain gen",
+    ], row_labels(["pore", "stain"])
+
+    caption = grid_caption().lower()
+    assert "row" in caption, grid_caption()
+    assert "column" not in caption, grid_caption()
+
+
 def check_generated_class_manifest(tmp):
     """A generated pool must record the class order it was produced with.
 
@@ -662,6 +759,9 @@ if __name__ == "__main__":
     check_sweep_csv_reading(tmp)
     check_training_curves_figure(tmp)
     check_filling_rate_curve_figure(tmp)
+    check_multi_seed_filling_rate_figure(tmp)
+    check_multi_seed_arm_exclusion()
+    check_comparison_grid_labels()
     check_confusion_matrix_figure(tmp)
     root = str(tmp / "smoke_data")
     make_synthetic_weld_data(root, size=64)

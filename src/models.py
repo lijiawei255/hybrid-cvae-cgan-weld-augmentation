@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Model definitions for the hybrid CVAE-CGAN pipeline
-(method-level re-implementation of Yang et al., CYBER 2025).
+(method-level re-implementation of Yang et al., CYBER 2025, with selected
+components from its journal extension in MSSP 2026: the spectral-normalised
+hinge discriminator, the GroupNorm option and the KL annealing schedule; the
+inner docstrings attribute each piece).
 
 The "hybrid" is that one decoder plays both roles at once: it is the CVAE
 decoder D(z, y) that reconstructs the input, and simultaneously the CGAN
@@ -11,7 +14,8 @@ Both papers train these objectives **jointly** under a single combined loss
 generator and discriminator updates within each minibatch.
 
 Conventions every module here shares, both dictated by the paper:
-  * images are single-channel grayscale in [0, 1];
+  * images live in [0, 1]; the channel count is a parameter (`channels`) - the
+    papers' camera produced grayscale, the current primary dataset keeps RGB;
   * the decoder ends in a sigmoid, so its output is already in that range and
     nothing downstream needs a Tanh-style rescale.
 """

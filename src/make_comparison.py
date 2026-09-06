@@ -5,8 +5,9 @@ real images from --real_root and the lower row showing images produced by
 src/generate.py from --gen_root/class_<i>.
 
 Class indices follow the same convention as the rest of the pipeline: classes
-are the sorted subdirectory names of --real_root (e.g. CR=0, LP=1, ND=2,
-PO=3) and generated images live in class_<i> folders under --gen_root.
+are the sorted subdirectory names of --real_root (e.g. deposit=0,
+discontinuity=1, pore=2, stain=3) and generated images live in class_<i>
+folders under --gen_root.
 
 Pure PIL, no deep-learning dependencies. Output is a single PNG suitable for
 the README and the repository's results/ folder.
@@ -32,6 +33,18 @@ def load_images(files, per_class, img_size, seed):
     return imgs
 
 
+def row_labels(class_names):
+    labels = []
+    for cname in class_names:
+        labels.append(f"{cname} real")
+        labels.append(f"{cname} gen")
+    return labels
+
+
+def grid_caption():
+    return "each class: one row of real crops, one row of generated"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--real_root", default="data")
@@ -52,7 +65,7 @@ def main():
     s = args.img_size
     g, lw = args.gap, args.label_width
 
-    rows = []  # (label, [PIL images])
+    image_rows = []
     for cname in class_names:
         real_files = [p for p in (real_root / cname).iterdir()
                       if p.suffix.lower() in (".png", ".jpg", ".jpeg")]
@@ -64,8 +77,10 @@ def main():
         gen_imgs = load_images(pool[cname], args.per_class, s, seed=1)
         print(f"{cname}: {len(pool[cname])} generated available ({len(gen_imgs)} shown), "
               f"{len(real_files)} real available ({len(real_imgs)} shown)")
-        rows.append((f"{cname} real", real_imgs))
-        rows.append((f"{cname} gen", gen_imgs))
+        image_rows.append(real_imgs)
+        image_rows.append(gen_imgs)
+
+    rows = list(zip(row_labels(class_names), image_rows))
 
     try:
         font = ImageFont.load_default(size=args.font_size)
@@ -79,8 +94,7 @@ def main():
     canvas = Image.new("RGB", (W, H), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
 
-    draw.text((lw + (W - lw) * 0.25 - 20, 10), "Real", fill=(0, 0, 0), font=font)
-    draw.text((lw + (W - lw) * 0.75 - 40, 10), "Generated", fill=(0, 0, 0), font=font)
+    draw.text((8, 10), grid_caption(), fill=(0, 0, 0), font=font)
 
     y = header_h
     for label, imgs in rows:

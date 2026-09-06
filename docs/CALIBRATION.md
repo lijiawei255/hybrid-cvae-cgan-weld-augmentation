@@ -777,7 +777,32 @@ python src/train_classifier.py --data_root data/lohi --gen_root generated_paper2
   --channels 3 --out_dir runs/sweep_paper2_s42
 ```
 
-The matched control that caveat 1 asks for is the same two commands pointed at
+Seeds 43 and 44 repeat all three steps, because the pool's seed is inherited from
+the checkpoint and the sweep refuses a pool whose seed disagrees with its own. So
+the three-seed aggregate varies the generator as well as the classifier:
+
+```bash
+for S in 43 44; do
+  python src/train_joint.py --data_root data/lohi \
+    --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
+    --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
+    --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
+    --patience 70 --lr_patience 70 --seed "$S" \
+    --d_norm group --weighted_sampler \
+    --fid_every 5 --sample_every 10 --out_dir "runs/paper2_gn_wrs_s$S"
+
+  python src/generate.py --ckpt "runs/paper2_gn_wrs_s$S/joint.pt" --seed "$S" \
+    --out_root "generated_paper2_s$S" \
+    --counts "deposit=450,discontinuity=300,pore=560,stain=0"
+
+  python src/train_classifier.py --data_root data/lohi \
+    --gen_root "generated_paper2_s$S" \
+    --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+    --channels 3 --seed "$S" --out_dir "runs/sweep_paper2_s$S"
+done
+```
+
+The matched latent-128 BatchNorm control is the same three commands pointed at
 `runs/probe_eq_g0.1`, into its own pool directory - `verify_generation_meta`
 refuses to sweep a pool whose `subset`, `seed` or `test_frac` disagree with the
 sweep's, and `generate.py` writes the seed from the checkpoint, so pool and sweep
@@ -788,9 +813,49 @@ python src/generate.py --ckpt runs/probe_eq_g0.1/joint.pt --seed 42 \
   --out_root generated_ctrl \
   --counts "deposit=450,discontinuity=300,pore=560,stain=0"
 
+# --num_workers 0 because the worker processes were the source of a mid-sweep
+# crash on this machine; the numbers in section 9 come from this run directory.
 python src/train_classifier.py --data_root data/lohi --gen_root generated_ctrl \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
-  --channels 3 --out_dir runs/sweep_ctrl_s42
+  --channels 3 --num_workers 0 --out_dir runs/sweep_ctrl_s42_clean
+```
+
+`results/filling_rate_multiseed.png` is drawn from the `sweep_metrics.csv` files of
+the three runs above, so it needs neither a GPU nor the dataset. `--exclude` drops
+the invalid seed-42 `r=0.25` arm from the aggregate without removing that ratio
+from seeds 43 and 44, which is why that ratio is annotated `n=2` in the figure;
+the band is the sample standard deviation, the same convention as the table above.
+
+```bash
+python src/make_multiseed_figure.py \
+  --seed_sweep runs/sweep_paper2_s42/sweep_metrics.csv \
+  --seed_sweep runs/sweep_paper2_s43/sweep_metrics.csv \
+  --seed_sweep runs/sweep_paper2_s44/sweep_metrics.csv \
+  --exclude "runs/sweep_paper2_s42/sweep_metrics.csv=0.25" \
+  --reference "published v0.2.0, latent-32 BatchNorm (seed 42)=runs/sweep/sweep_metrics.csv" \
+  --reference "matched latent-128 BatchNorm control (seed 42)=runs/sweep_ctrl_s42_clean/sweep_metrics.csv" \
+  --minority pore --out results/filling_rate_multiseed.png
+```
+
+The committed showcase grids come from the same recommended checkpoint but from a
+*separate* pool. `generated_paper2` holds `stain=0` because balance-to-max needs no
+stain images, and adding some would break the `meta.json` contract that
+`verify_generation_meta` checks against the sweep; a showcase figure, however, has
+to show all four classes. So the grids are generated into their own directory,
+which no sweep ever reads:
+
+```bash
+python src/generate.py --ckpt runs/paper2_gn_wrs/joint.pt --seed 42 \
+  --out_root generated_showcase \
+  --counts "deposit=300,discontinuity=300,pore=300,stain=300"
+
+# --per_class 6 and --label_width 210 keep the geometry of the committed figure;
+# the default 150 truncates the "discontinuity real" row label.
+python src/make_comparison.py --real_root data/lohi --gen_root generated_showcase \
+  --out results/real_vs_generated.png --per_class 6 --label_width 210
+
+python src/make_class_figures.py --real_root data/lohi \
+  --gen_root generated_showcase --out_dir results --channels 3
 ```
 
 ## 10. The downstream classifier is not bit-reproducible, and it scores the final epoch

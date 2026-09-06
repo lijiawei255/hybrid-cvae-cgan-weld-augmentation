@@ -19,12 +19,15 @@ gamma=1.0 belong to a different loss normalisation; see docs/CALIBRATION.md):
 annealing schedule via --kl_warmup.
 
 Four components come from the journal extension rather than the conference paper
-and are switchable, each defaulting to the configuration the tagged v0.2.0 runs
-were produced with: --d_norm group (GroupNorm in the discriminator, its Table 3
+and are switchable: --d_norm group (GroupNorm in the discriminator, its Table 3
 choice), --weighted_sampler (class-balanced batches at P ~ 1/N_class),
 --kl_warmup ZERO,RAMP (beta held at zero, then ramped linearly to --kl_weight)
-and --monitor val_recon (the metric its ReduceLROnPlateau watched). They are off
-by default so that a recorded v0.2.0 config still reproduces a v0.2.0 run.
+and --monitor val_recon (the metric its ReduceLROnPlateau watched). All four are
+off by default - the defaults are the conference-paper behaviour (BatchNorm
+discriminator, unbalanced sampling, constant beta, val_loss monitoring), which is
+also what the tagged v0.2.0 runs used, so a recorded v0.2.0 config still
+reproduces a v0.2.0 run. The recommended GroupNorm + weighted-sampler
+configuration and its evidence are in docs/CALIBRATION.md section 9.
 
 Leakage-free by construction. Images are split into a train pool and a real-only
 held-out test set *first*; the generator only ever sees subsets drawn from the
@@ -130,7 +133,7 @@ def main():
     ap.add_argument("--data_root", required=True)
     ap.add_argument("--out_dir", default="runs/joint")
     ap.add_argument("--subset", required=True,
-                    help="generator training subset by class NAME, e.g. 'CR=40,PO=200,ND=300,LP=600'")
+                    help="generator training subset by class NAME, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'")
     ap.add_argument("--val_per_class", type=int, default=500,
                     help="real validation images per class; also the FID reference set")
     ap.add_argument("--test_frac", type=float, default=0.2)

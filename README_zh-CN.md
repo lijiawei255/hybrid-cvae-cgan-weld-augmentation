@@ -93,7 +93,7 @@ python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 - `--kl_warmup ZERO,RAMP` 先把 beta 保持为 0 共 `ZERO` 个 epoch，然后在 `RAMP` 个 epoch 内线性升到 `--kl_weight`。它需要期刊论文的 200-epoch 协议才有意义；在 70-epoch 的运行里只有 10 个 epoch 会跑在满 beta 下，因此本仓库刻意不训练它。
 - `--monitor val_recon` 仅以重建 MSE 挑选最佳 checkpoint。在 `--kl_warmup` 下必须使用，因为总损失包含 `beta * KL`，其含义会随 beta 爬升而改变。
 
-同时启用 `--d_norm group --weighted_sampler` 就是 `docs/CALIBRATION.md` 第 9 节实测的那个配置。复用其中数字前请先读该节的两条限定：那一臂同时改了两个变量，因此两个效果都没有被单独归因；并且它的 FID 变差而重建变好。
+同时启用 `--d_norm group --weighted_sampler` 就是 `docs/CALIBRATION.md` 第 9 节实测的那个配置。复用其中数字前请先读该节列出的四条"这次测量没有确立什么"。尤其注意：一个对照的 BatchNorm、不加权采样配置也复现出了同样为正的 r=1.0 结果，因此这两个开关都**不是**该结果的必要条件，并且两者各自的贡献也没有被单独估计。
 
 ### 推荐配置
 
@@ -168,9 +168,23 @@ python src/train_joint.py \
 > 两个开关各自的增益；该对照只有一个 seed。完整表格和限制见
 > `docs/CALIBRATION.md` 第 9 节。
 
-`results/` 中的图：`filling_rate_curve.png`（上述扫描）、`training_curves.png`（各损失分量与每 epoch FID）、`reconstruction_comparison.png`（真实/重建/生成）、`latent_tsne.png`（编码器隐空间投影）、`confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png`，以及每类特写（`class_*.png`）与真实-生成对照网格（`real_vs_generated.png`）。
+`results/` 中的图。**每张图都属于某一次特定运行** —— 上文报告的扫描是唯一的三 seed 结果，而只有一张图展示它：
 
-**已提交的 LoHi-WELD showcase。** 以下示例已随仓库提交，clone 用户无需持有数据集即可查看当前输出格式；它们是定性示例，不构成额外评估证据。
+| 图 | 由哪次运行产出 |
+|---|---|
+| `filling_rate_multiseed.png` | 上文报告的三 seed GroupNorm + 加权采样扫描，与两条单 seed 参考臂对比 |
+| `filling_rate_curve.png` | **已发布的 v0.2.0 单 seed** 扫描（`runs/sweep`），即本节开头那张五行表 —— 不是上文注记里的三 seed 数值 |
+| `training_curves.png`、`reconstruction_comparison.png`、`latent_tsne.png` | 已发布的 v0.2.0 生成器（`runs/joint_lohi`） |
+| `confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png` | 已发布的 v0.2.0 扫描 |
+| `real_vs_generated.png`、`class_*.png` | 推荐的 `runs/paper2_gn_wrs` 生成器（见下文 showcase） |
+
+第一行与最后一行的复现命令见 `docs/CALIBRATION.md` 第 9 节。
+
+![按 seed 聚合的填充率曲线](results/filling_rate_multiseed.png)
+
+阴影带是三个 seed 上的 ±1 样本标准差；`n=2` 标记 r=0.25，该比例下 seed 42 那一臂因最后 epoch 的 loss 尖峰被排除。三 seed 均值仅在 r=0.5 与 r=1.0 高于两条虚线单 seed 参考臂 —— 在 r=0 与 r=0.75，两条参考臂都在均值之上 —— 所以这张图支持的是 r=1.0 的结论，而不是三种配置逐比例的排序。
+
+**已提交的 LoHi-WELD showcase。** 以下示例已随仓库提交，clone 用户无需持有数据集即可查看当前输出格式；它们是定性示例，不构成额外评估证据。它们来自**推荐的** GroupNorm + 加权采样生成器 `runs/paper2_gn_wrs/joint.pt`，以 seed 42 采样进一个仅用于 showcase 的池，每类 300 张 —— 与 `generated_paper2` 扫描池分开，后者的 `stain=0`，因为 balance-to-max 不需要补 stain。每张特写上打印的按类 FID 只是与本仓库其他数值同一尺度的内部诊断量，不可与文献比较。这五张图的 v0.2.0 旧版本保留为 `results/v0.2.0_*.png`；它们的生成行在同一类内明显几乎相同，那正是推荐配置所缓解的模式坍缩。
 
 ![LoHi-WELD 真实与生成样本](results/real_vs_generated.png)
 
@@ -210,6 +224,7 @@ src/generate.py           类条件采样, 数量以类名键入
 src/eval_fid.py           FID(InceptionV3 特征) 与输入归一化
 src/train_classifier.py   下游 filling-rate 扫描(从零 ResNet-18)
 src/make_paper_figures.py 训练曲线、敏感性曲线、t-SNE、混淆矩阵
+src/make_multiseed_figure.py 按 seed 聚合的敏感性曲线, 仅需 CSV
 src/make_comparison.py    真实-生成对照网格, 输出到 results/
 src/make_class_figures.py 每类特写(含每类 FID)
 src/smoke_test.py         单元检查 + 合成数据端到端运行
@@ -219,21 +234,20 @@ src/smoke_test.py         单元检查 + 合成数据端到端运行
 
 当前实验使用 **[LoHi-WELD](https://github.com/SylvioBlock/LoHi-Weld)**（Block et al., IEEE Access 2024）：3,022 张**可见光**焊缝图像、四个缺陷类，允许免费研究与商用、需引用。与被复现论文的熔池图像一样是可见光；其高分辨率焊缝裁出 8,012 个缺陷补丁、类失衡 **11.6×**——接近会议论文的 14.7×。
 
-它以检测数据形式发布（图像 + YOLO 标签对），因此 `src/prepare_yolo_crops.py` 把每个标注框裁进类文件夹；该裁剪同时就是论文的 ROI 提取预处理步骤。下载 LoHi-WELD 后按如下命令制备：
+它以检测数据形式发布（图像 + YOLO 标签对），因此 `src/prepare_yolo_crops.py` 把每个标注框裁进类文件夹；该裁剪同时就是论文的 ROI 提取预处理步骤。下载 LoHi-WELD 后，只取 `high_resolution_welds` 子集制备（低分辨率焊缝的标注框太小，上采样后没有可用信号）：
 
 ```bash
 python src/prepare_yolo_crops.py \
-  --input_root /path/to/LoHi-WELD \
-  --out_root data/lohi \
-  --classes "pore,deposit,discontinuity,stain" \
-  --img_size 224 --channels 3 --margin 0.1
+  --input_root <archive>/weld-dataset/high_resolution_welds \
+  --out_root data/lohi --img_size 224 --channels 3 --min_side 16 \
+  --classes "pore,deposit,discontinuity,stain"
 ```
 
 这会生成 8,012 个裁剪块：deposit 1,193、discontinuity 2,975、pore 304、stain 3,540（失衡比约 11.6×）。当前实验只使用该完整树的一个小而失衡的 `--subset`，而非全部 8,012 张。
 
 **RIAWELC**（X 光放射图）曾被 v0.1.0 与生成器标定记录使用，现在仅为历史脚注——当前没有任何数字源自它。其引用被保留，因为那些已公开的结果用过它。该数据集可在原作者仓库获取；制备时把带 split 前缀的类文件夹合并为 `LP`、`PO`、`CR`、`ND` 四个子文件夹即可。
 
-本仓库不打包任何数据集，也永远不应提交——`data/`、`generated/`、`runs/` 与 `*.pt` 按设计被 git-ignore。下载链接与许可条款见各数据集自身仓库页面。
+本仓库不打包任何数据集，也永远不应提交——`data/`、`generated/`、`runs/` 与 `*.pt` 按设计被 git-ignore。下载链接与许可条款见各数据集自身仓库页面；完整出处、条款与备选数据集记录在 [`DATA_SOURCES.md`](DATA_SOURCES.md)。
 
 ## 局限与诚实说明
 
@@ -244,7 +258,7 @@ python src/prepare_yolo_crops.py \
 - **下游分类器不是论文的分类器。** 两篇论文都在 21 帧时序序列上评估 LSTM/GRU 模型。静态焊缝图像没有时间轴，无法构造序列；故以单帧上从零训练的 ResNet-18 替代，尊重论文对轻量非预训练模型的偏好。准确率与 F1 因此不可与论文比较——只有协议可比。
 - **FID 在此是趋势指标，不是绝对分数。** 数据集、分辨率与参考集都不同于任何已发表 FID。只在本仓库内比曲线，绝不跨仓库比。
 - **四个超参是标定的，不是照抄的。** KL 权重（0.015 vs 论文 30）、判别器学习率、FFT 去噪步（关闭，实测接近空操作）、分辨率（224 vs 400）各自因实测原因与会议论文不同。对抗目标遵循**期刊扩展**（hinge + spectral normalisation）而非会议论文的 BCE minimax，因为无界 BCE 项在该数据规模下摧毁重建。证据与复现命令：[`docs/CALIBRATION.md`](docs/CALIBRATION.md)。
-- **单 seed。** 所有报告数字均为 seed 42 的单次运行。该规模下 GAN 训练有噪声；小于几个点的差异请视为噪声内。
+- **大部分是单 seed。** 已发表的 v0.2.0 表格是 seed 42 的单次运行，配对的 BatchNorm 对照也是单 seed。只有 GroupNorm + 加权采样的重跑有三个生成器/池/分类器 seed（42/43/44），其中 r=0.25 因 seed 42 的损失尖峰只剩两个。该规模下 GAN 训练有噪声；小于几个点的差异请视为噪声内。
 - **构造上无泄漏。** 生成器永远看不到分类器的 held-out 测试图。这比严格必要更严，是对论文 "real, unseen images" 的诚实读法；也意味着报告的增益（若有）未被测试集信息 inflate。
 
 ### 范围：本仓库刻意不复现的部分
@@ -262,7 +276,7 @@ python src/prepare_yolo_crops.py \
 
 ## 许可证
 
-代码：[MIT](LICENSE)。第三方数据集保留其自身许可。
+代码：[MIT](LICENSE)。第三方数据集保留其自身许可。`results/` 中已提交的图由 LoHi-WELD 影像派生，因此除本仓库的 MIT 许可外，仍受该数据集引用要求约束。
 
 ## 引用方式
 
@@ -280,6 +294,7 @@ python src/prepare_yolo_crops.py \
   address   = {Shanghai, China},
   month     = jul,
   year      = {2025},
+  pages     = {1--6},
   doi       = {10.1109/CYBER67662.2025.11168313}
 }
 
@@ -315,8 +330,10 @@ python src/prepare_yolo_crops.py \
   author  = {Perri, Stefania and Spagnolo, Fanny and Frustaci, Fabio and
              Corsonello, Pasquale},
   journal = {Manufacturing Letters},
-  note    = {In press, Elsevier. Recorded as "in press" by the RIAWELC
-             repository, so no year, volume or pages are asserted here}
+  volume  = {35},
+  pages   = {29--32},
+  year    = {2023},
+  doi     = {10.1016/j.mfglet.2022.11.006}
 }
 
 % --- 作为主实验的可见光焊缝缺陷数据集 ---
@@ -327,6 +344,8 @@ python src/prepare_yolo_crops.py \
   author  = {Block, Sylvio Biasuz and Dutra da Silva, Ricardo and
              Lazzaretti, Andre Eugenio and Minetto, Rodrigo},
   journal = {IEEE Access},
+  volume  = {12},
+  pages   = {77442--77453},
   year    = {2024},
   doi     = {10.1109/ACCESS.2024.3407019}
 }

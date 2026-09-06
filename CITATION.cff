@@ -29,6 +29,7 @@ references:
     year: 2025
     doi: "10.1109/CYBER67662.2025.11168313"
     collection-title: "Proc. 15th IEEE International Conference on CYBER Technology in Automation, Control, and Intelligent Systems (CYBER 2025)"
+    pages: "1-6"
     notes: "Shanghai, China, 15-18 July 2025. IEEE Xplore document no. 11168313. Primary method reference for this re-implementation."
 
   # ---------------------------------------------------------------------
@@ -85,9 +86,13 @@ references:
         given-names: "Fabio"
       - family-names: "Corsonello"
         given-names: "Pasquale"
+    year: 2023
+    doi: "10.1016/j.mfglet.2022.11.006"
     journal: "Manufacturing Letters"
     publisher: "Elsevier"
-    notes: "Second citation required by the RIAWELC dataset authors. Recorded as 'in press' by the dataset repository, so no year, volume or pages are asserted here rather than inventing bibliographic details."
+    volume: 35
+    pages: "29-32"
+    notes: "Second citation required by the RIAWELC dataset authors."
   - type: article
     title: "LoHi-WELD: A Novel Industrial Dataset for Weld Defect Detection and Classification, a Deep Learning Study, and Future Perspectives"
     authors:
@@ -102,6 +107,8 @@ references:
     year: 2024
     doi: "10.1109/ACCESS.2024.3407019"
     journal: "IEEE Access"
+    volume: 12
+    pages: "77442-77453"
     notes: "Source of the visible-light weld defect dataset intended as the primary experiment. Citing it is a usage requirement of the dataset."
 
   # ---------------------------------------------------------------------

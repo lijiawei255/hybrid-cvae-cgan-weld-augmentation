@@ -44,9 +44,11 @@ dataset files to this repository or attach them to releases.
 - **Required citation**: Sylvio Biasuz Block, Ricardo Dutra da Silva,
   Andre Eugenio Lazzaretti, Rodrigo Minetto, "LoHi-WELD: A Novel Industrial
   Dataset for Weld Defect Detection and Classification, a Deep Learning Study,
-  and Future Perspectives", IEEE Access, 2024.
+  and Future Perspectives", IEEE Access, vol. 12, pp. 77442-77453, 2024.
   DOI: [10.1109/ACCESS.2024.3407019](https://doi.org/10.1109/ACCESS.2024.3407019)
-  (IEEE Access is gold open access).
+  (IEEE Access is gold open access). The committed figures in `results/` are
+  derived from this dataset's imagery, so they stay subject to this citation
+  requirement as well.
 
 ### RIAWELC (previously used; superseded by LoHi-WELD)
 
@@ -72,7 +74,8 @@ No figure, table or number in the current results derives from it.
      (ICMECE 2022), Barcelona, Spain, 6-7 October 2022.
   2. Stefania Perri, Fanny Spagnolo, Fabio Frustaci, Pasquale Corsonello,
      "Welding Defects Classification Through a Convolutional Neural Network",
-     Manufacturing Letters, Elsevier.
+     Manufacturing Letters, vol. 35, pp. 29-32, 2023.
+     DOI: [10.1016/j.mfglet.2022.11.006](https://doi.org/10.1016/j.mfglet.2022.11.006)
 
 ## Alternatives (not used by default)
 
@@ -94,7 +97,7 @@ citation data; no figures, tables or passages are copied from either paper.
    Defect Images Using a Hybrid CVAE-CGAN: A Data Augmentation Strategy for
    Small and Imbalanced Datasets", Proc. 15th IEEE International Conference on
    CYBER Technology in Automation, Control, and Intelligent Systems (CYBER
-   2025), Shanghai, China, 15-18 July 2025.
+   2025), Shanghai, China, 15-18 July 2025, pp. 1-6.
    DOI: [10.1109/CYBER67662.2025.11168313](https://doi.org/10.1109/CYBER67662.2025.11168313)
    (IEEE Xplore doc. no. 11168313; IEEE copyright, not open access).
 

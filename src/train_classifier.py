@@ -20,9 +20,9 @@ Protocol notes:
   the training set. Higher ratios therefore also perform proportionally more
   optimization steps, which is the augmentation treatment being measured.
 - Known limitation, disclosed in README.md: the papers evaluate LSTM/GRU
-  sequence models on 21-frame molten-pool sequences. Static radiographs have no
-  temporal axis, so an image classifier is substituted. The *protocol* is
-  reproduced; the numbers are not comparable to the papers'.
+  sequence models on 21-frame molten-pool sequences. Static weld-bead images
+  have no temporal axis, so an image classifier is substituted. The *protocol*
+  is reproduced; the numbers are not comparable to the papers'.
 """
 import argparse
 import csv
@@ -114,7 +114,7 @@ def main():
                     help="generate.py output tree holding the ratio-1.0 pool")
     ap.add_argument("--subset", required=True,
                     help="real training subset by class NAME, must match what the "
-                         "generator was trained on, e.g. 'CR=40,PO=200,ND=300,LP=600'")
+                         "generator was trained on, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'")
     ap.add_argument("--ratios", default="0.0,0.25,0.5,0.75,1.0",
                     help="comma-separated filling rates to sweep")
     ap.add_argument("--img_size", type=int, default=224)
