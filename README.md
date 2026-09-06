@@ -84,6 +84,45 @@ python src/make_paper_figures.py --data_root data/lohi \
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 ```
 
+### Switches taken from the journal extension
+
+The Quickstart above reproduces the *conference* paper's configuration. Four
+`train_joint.py` switches implement components that appear only in the journal
+extension (MSSP 2026). All four default to the conference-paper behaviour, so
+nothing changes unless you ask for it.
+
+| switch | default | journal-extension value | status |
+|---|---|---|---|
+| `--d_norm` | `batch` | `group` | measured, recommended |
+| `--weighted_sampler` | off | on | measured, recommended |
+| `--kl_warmup` | off (constant beta) | `10,50` | implemented and unit-tested, **not training-validated** |
+| `--monitor` | `val_loss` | - | only needed together with `--kl_warmup` |
+
+- `--d_norm group` replaces the discriminator's BatchNorm with GroupNorm. At
+  `--batch_size 8` BatchNorm makes a sample's score depend on its seven batch
+  neighbours; GroupNorm normalises within each sample. Measured effect: the
+  discriminator's hinge loss moves from a median of 0.819 (a dominant
+  discriminator) to 1.998, matching the journal paper's report that it "settles
+  to an approximately constant value around 2.0".
+- `--weighted_sampler` draws training batches with `WeightedRandomSampler`,
+  weight proportional to `1/N_class`. `--subset` caps per-class counts but does
+  **not** balance batches: a 40-image minority class inside a 1,090-image subset
+  is 3.7% of draws, so at batch size 8 most minibatches contain no minority
+  sample at all.
+- `--kl_warmup ZERO,RAMP` keeps beta at 0 for `ZERO` epochs then ramps linearly
+  to `--kl_weight` over `RAMP` epochs. It needs the journal paper's 200-epoch
+  protocol to mean anything; inside a 70-epoch run only 10 epochs would execute
+  at full beta, so it is deliberately not trained here.
+- `--monitor val_recon` selects the best checkpoint on reconstruction MSE alone.
+  Required under `--kl_warmup`, because the total loss includes `beta * KL` and
+  therefore changes meaning as beta ramps.
+
+Enabling `--d_norm group --weighted_sampler` together is the configuration
+measured in `docs/CALIBRATION.md` section 9. Read the two qualifications there
+before reusing the numbers: that arm changed both variables at once, so neither
+effect is separately attributed, and its FID got worse while its reconstruction
+improved.
+
 ### Using your own dataset
 
 Point `--data_root` at a folder of class subfolders. Nothing else is
@@ -98,9 +137,18 @@ dataset-specific:
   balance-to-max to fill up to.
 - `--channels 3` works for colour data; `--img_size` must be divisible by 16.
 - `--fft_denoise` enables the paper's FFT low-pass preprocessing. It is off by
-  default: measured unnecessary on RIAWELC (band-limited radiographs, see
-  `CHANGELOG.md`) and left untested on LoHi-WELD, where the simpler default was
-  used. Turn it on if your imagery carries high-frequency sensor noise.
+  default, and measured to be a near no-op on both datasets used here. RIAWELC's
+  radiographs are already band-limited. LoHi-WELD's crops put 99.2-99.9% of their
+  spectral energy inside normalised radius 0.1, so at the paper's `cutoff = 0.25`
+  the filter retains **0.0%** of the mid-band where defect edges live and changes
+  the image by an MSE of 3-14 on the [0, 255] scale, out of a possible 65,025.
+  It is inert there because the crops are upsamples of small source boxes, and
+  upsampling cannot create high-frequency content - so what the filter mostly
+  does is make the *target* smoother. Any apparent gain from it should be read as
+  "the task got easier", not "the method got stronger". See
+  `docs/CALIBRATION.md` section 3. Turn it on if your own imagery carries genuine
+  high-frequency sensor noise, and pass it to `src/eval_fid.py` too, or FID will
+  measure the preprocessing mismatch instead of generation quality.
 - `--kl_weight` must be rescaled if you change the loss normalisation. See
   `models.cvae_loss` and the derivation in `CHANGELOG.md`.
 
@@ -114,7 +162,7 @@ MSE 0.049-0.060 against a constant-mean baseline of 0.062; sample grids show
 clear per-class morphology.
 
 **Filling-rate sweep** - one from-scratch ResNet-18 per ratio, 100 epochs each,
-all evaluated on the same held-out real-only test set (1,602 images):
+all evaluated on the same held-out real-only test set (1,603 images):
 
 | ratio | accuracy | macro-F1 | weighted-F1 | deposit | discontinuity | pore | stain |
 |---|---|---|---|---|---|---|---|
@@ -138,6 +186,25 @@ Two findings, reported as measured:
    flooding dilutes the real signal instead of reinforcing it. Treat
    "fill to N_max" as a hypothesis to test on your own data, not a default.
 
+> **Finding 2 is partly superseded, and the table above is kept as published.**
+> Re-running the sweep with the journal extension's configuration
+> (`--d_norm group --weighted_sampler`, `--latent_dim 128`, `--kl_weight 0.059`,
+> the full 70 epochs) **reverses it at r=1.0**: that ratio becomes the *best* on
+> the curve, macro-F1 0.7168 against this arm's own 0.6848 real-only baseline
+> (+0.032), with pore F1 0.5053 against the published 0.3871 (+0.118). Over the
+> four ratios that completed cleanly the curve is monotone increasing
+> (0.6848 -> 0.6932 -> 0.7102 -> 0.7168), which is the shape the journal paper
+> reports and the shape the v0.2.0 curve did not have. The r=0.25 arm of the new
+> sweep is **not a measurement**: its loss spiked three orders of magnitude at the
+> final epoch and the classifier scores the final epoch.
+>
+> Do not read this as "GroupNorm fixed balance-to-max". The new configuration
+> differs from v0.2.0 in five respects at once, and the matched control - the
+> latent-128 BatchNorm arm in `runs/probe_eq_g0.1` - has not been swept, so the
+> reversal cannot yet be attributed to either switch. It is also a single seed,
+> against a measured run-to-run spread of 0.034 pore F1. Full numbers, both
+> tables and all four caveats: `docs/CALIBRATION.md` section 9.
+
 Figures in `results/`: `filling_rate_curve.png` (the sweep above),
 `training_curves.png` (loss components and FID per epoch),
 `reconstruction_comparison.png` (real / reconstruction / generated),
@@ -145,11 +212,19 @@ Figures in `results/`: `filling_rate_curve.png` (the sweep above),
 (r=0 vs r=1), `class_distribution.png`, plus per-class close-ups
 (`class_*.png`) and the real-vs-generated grid (`real_vs_generated.png`).
 
-**Caveats.** Single seed - treat differences under ~0.02 macro-F1 as noise. The
-downstream classifier is a from-scratch ResNet-18 over single images, not the
-papers' LSTM/GRU over 21-frame sequences, so absolute scores are not comparable
-to the papers'. See the limitations list above and `docs/CALIBRATION.md` for the
-full calibration record.
+**Caveats.** Single seed, and the classifier is not bit-reproducible on GPU:
+`train_classifier.py` seeds every RNG but never enables deterministic CUDA
+algorithms, so a repeat of the *unchanged* real-only arm at the same seed moved
+pore F1 by 0.034 and macro-F1 by 0.009. Treat differences below that as noise,
+in either direction - the earlier "~0.02 macro-F1" guess in this paragraph was
+too optimistic for the minority class, which is scored on only 61 test images.
+It also evaluates the **final** epoch at a constant learning rate, with no
+early stopping and no best-epoch selection, so a late loss spike can invalidate
+one arm outright. Both are measured and explained in `docs/CALIBRATION.md`
+section 10. Separately, the downstream classifier is a from-scratch ResNet-18
+over single images, not the papers' LSTM/GRU over 21-frame sequences, so absolute
+scores are not comparable to the papers'. See the limitations list above for the
+rest of the calibration record.
 
 ## Results - v0.1.0 (superseded, do not quote)
 

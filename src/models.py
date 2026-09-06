@@ -39,6 +39,35 @@ def _final_size(img_size):
     return img_size // 16
 
 
+GROUP_NORM_GROUPS = 32
+
+
+def _norm_layer(norm):
+    """Normalisation factory for the discriminator; returns a callable channels -> layer.
+
+    ``batch`` is what the tagged v0.2.0 runs were produced with. ``group`` is the
+    journal paper's choice - its Table 3 lists GroupNorm as the normalisation layer
+    for every network, chosen "to ensure stability with small batch sizes, avoiding
+    the statistical instability associated with Batch Normalisation". That matters
+    concretely here because this repo trains at batch_size=8, where a BatchNorm
+    discriminator scores an image using statistics from the other seven images in
+    its batch. The group count is 32 because the paper does not state one.
+    """
+    if norm == "batch":
+        return nn.BatchNorm2d
+    if norm != "group":
+        raise ValueError(f"norm must be 'batch' or 'group', got {norm!r}")
+
+    def group_norm(channels):
+        if channels % GROUP_NORM_GROUPS:
+            raise ValueError(
+                f"GroupNorm uses {GROUP_NORM_GROUPS} groups, so base_ch must give channel "
+                f"counts divisible by {GROUP_NORM_GROUPS}; got {channels}")
+        return nn.GroupNorm(GROUP_NORM_GROUPS, channels)
+
+    return group_norm
+
+
 class Encoder(nn.Module):
     """CVAE encoder E(x, y) -> (mu, logvar) of the latent distribution.
 
@@ -124,18 +153,26 @@ class Discriminator(nn.Module):
     Every weight matrix is spectral-normalised, as in the journal extension. That
     bounds the score's Lipschitz constant, which is what keeps the hinge
     generator term bounded - without it the adversarial loss overwhelmed the
-    reconstruction term on the small training set (docs/CALIBRATION.md).
+    reconstruction term on the small training set (docs/CALIBRATION.md). The
+    journal paper applies SN to the first three convolutional blocks only; this
+    repo applies it to all of them plus the dense head, which is the deviation
+    recorded in that document.
+
+    ``norm`` selects the normalisation layer (see _norm_layer). ``weights_init``
+    matches on the substring "BatchNorm", so GroupNorm layers keep PyTorch's own
+    defaults (weight 1, bias 0), which is what they should start at.
     """
 
-    def __init__(self, img_channels=1, num_classes=4, base_ch=64, img_size=224):
+    def __init__(self, img_channels=1, num_classes=4, base_ch=64, img_size=224, norm="batch"):
         super().__init__()
         self.label_emb = nn.Embedding(num_classes, img_size * img_size)
         c = base_ch
+        normalise = _norm_layer(norm)
         layers = [
             nn.Conv2d(img_channels + 1, c, 4, 2, 1), nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(c, c * 2, 4, 2, 1), nn.BatchNorm2d(c * 2), nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(c * 2, c * 4, 4, 2, 1), nn.BatchNorm2d(c * 4), nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(c * 4, c * 8, 4, 2, 1), nn.BatchNorm2d(c * 8), nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(c, c * 2, 4, 2, 1), normalise(c * 2), nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(c * 2, c * 4, 4, 2, 1), normalise(c * 4), nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(c * 4, c * 8, 4, 2, 1), normalise(c * 8), nn.LeakyReLU(0.2, inplace=True),
             nn.AdaptiveMaxPool2d(1),
         ]
         self.net = nn.Sequential(
@@ -184,6 +221,29 @@ def cvae_loss(x, x_recon, mu, logvar, kl_weight):
     recon = nn.functional.mse_loss(x_recon, x, reduction="mean")
     kl = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
     return recon + kl_weight * kl, recon, kl
+
+
+def kl_schedule(epoch, target, zero_epochs=0, ramp_epochs=0):
+    """Effective KL weight for a 1-indexed `epoch` under the journal paper's annealing.
+
+    The paper holds beta at zero for the first 10 epochs, then raises it linearly
+    to its target over the next 50, so the encoder learns to reconstruct before
+    the prior is imposed; it names a constant high beta from the start as the thing
+    that "risks posterior collapse where the encoder ignores inputs".
+
+    ``ramp_epochs=0`` turns annealing off and returns the constant target, which is
+    the behaviour the tagged v0.2.0 runs were produced with.
+    """
+    if epoch < 1:
+        raise ValueError(f"epoch is 1-indexed, got {epoch}")
+    if zero_epochs < 0 or ramp_epochs < 0:
+        raise ValueError(f"annealing lengths must be non-negative, got "
+                         f"zero_epochs={zero_epochs}, ramp_epochs={ramp_epochs}")
+    if ramp_epochs == 0:
+        return target
+    if epoch <= zero_epochs:
+        return 0.0
+    return target * min(1.0, (epoch - zero_epochs) / ramp_epochs)
 
 
 class PerceptualLoss(nn.Module):

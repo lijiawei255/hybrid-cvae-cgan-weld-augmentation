@@ -225,6 +225,7 @@ REPRODUCTION_GUIDE.md
 # --- internal reproduction guide out of version control ---
 data/
 generated/
+generated*/
 runs/
 papers/
 REPRODUCTION_GUIDE.md

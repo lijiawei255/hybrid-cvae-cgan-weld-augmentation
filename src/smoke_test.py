@@ -114,18 +114,31 @@ def check_history_csv_reading(tmp):
 
     path = tmp / "history.csv"
     path.write_text(
-        "epoch,recon,kl,perc,loss_g,loss_d,val_loss,val_recon,fid,lr,seconds\n"
-        "1,0.150000,0.001400,0.307000,1.200000,0.870000,0.166700,0.140000,384.7700,1.000e-03,39.0\n"
-        "2,0.120000,0.000000,0.250000,1.100000,0.500000,0.150000,0.120000,nan,1.000e-03,22.0\n",
+        "epoch,beta,recon,kl,perc,loss_g,loss_d,val_loss,val_recon,fid,lr,seconds\n"
+        "1,0.000000,0.150000,0.001400,0.307000,1.200000,0.870000,0.166700,0.140000,384.7700,1.000e-03,39.0\n"
+        "2,0.015000,0.120000,0.000000,0.250000,1.100000,0.500000,0.150000,0.120000,nan,1.000e-03,22.0\n",
         encoding="utf-8")
     history = read_history_csv(path)
     assert history["epoch"] == [1, 2]
+    assert history["beta"] == [0.0, 0.015]
     assert history["recon"] == [0.15, 0.12]
     assert history["lr"] == [1e-3, 1e-3]
     assert history["fid"][0] == 384.77
     # A skipped FID evaluation must stay NaN; turning it into 0 would plot a
     # fake perfect score.
     assert np.isnan(history["fid"][1])
+
+    # Run directories from the tagged v0.2.0 work predate the beta column and
+    # must still be plottable, so the reader has to key on the header rather
+    # than assume a fixed column layout.
+    legacy = tmp / "history_legacy.csv"
+    legacy.write_text(
+        "epoch,recon,kl,perc,loss_g,loss_d,val_loss,val_recon,fid,lr,seconds\n"
+        "1,0.150000,0.001400,0.307000,1.200000,0.870000,0.166700,0.140000,384.7700,1.000e-03,39.0\n",
+        encoding="utf-8")
+    old = read_history_csv(legacy)
+    assert old["epoch"] == [1] and old["recon"] == [0.15]
+    assert "beta" not in old
 
 
 def check_sweep_csv_reading(tmp):
@@ -526,6 +539,116 @@ def check_hinge_losses_and_bounded_score():
     assert float(score.abs().max()) < 100.0, float(score.abs().max())
 
 
+def check_discriminator_normalisation_choice():
+    """The journal paper normalises with GroupNorm (Table 3), not BatchNorm.
+
+    At this repo's batch_size=8 a BatchNorm discriminator scores an image using
+    statistics from the seven other images sharing its batch, so the same image
+    gets a different score depending on its neighbours. Measured consequence: our
+    hinge discriminator loss sits at a median of 0.82 over a range of 0.40-2.41,
+    with 97% of epochs below 1.5 (a dominant D), while the paper reports an
+    equilibrium near 2.0 (D(x,c) ~ 0).
+
+    ``norm="batch"`` must stay the default so the tagged v0.2.0 runs remain
+    reproducible from their recorded config.
+    """
+    import torch
+    from models import Discriminator
+
+    torch.manual_seed(0)
+    x = torch.rand(4, 1, 64, 64)
+    y = torch.tensor([0, 1, 0, 1])
+
+    batch_norm = Discriminator(1, 2, base_ch=16, img_size=64)
+    assert any(isinstance(m, torch.nn.BatchNorm2d) for m in batch_norm.modules())
+    assert not any(isinstance(m, torch.nn.GroupNorm) for m in batch_norm.modules())
+
+    group_norm = Discriminator(1, 2, base_ch=16, img_size=64, norm="group")
+    assert not any(isinstance(m, torch.nn.BatchNorm2d) for m in group_norm.modules())
+    assert any(isinstance(m, torch.nn.GroupNorm) for m in group_norm.modules())
+
+    # Each forward goes through a freshly seeded module, because spectral_norm
+    # updates its power-iteration buffers on every training forward - reusing one
+    # module would measure that drift instead of batch leakage.
+    def score_first(kind, batch):
+        torch.manual_seed(0)
+        dis = Discriminator(1, 2, base_ch=16, img_size=64, norm=kind)
+        dis.train()
+        with torch.no_grad():
+            return dis(batch, y[:batch.size(0)])[0]
+
+    small_bn, full_bn = score_first("batch", x[:2]), score_first("batch", x)
+    small_gn, full_gn = score_first("group", x[:2]), score_first("group", x)
+    assert not torch.allclose(small_bn, full_bn, atol=1e-6), "BatchNorm must leak batch context"
+    assert torch.allclose(small_gn, full_gn, atol=1e-9), (float(small_gn), float(full_gn))
+
+    for bad in ("instance", "", None):
+        try:
+            Discriminator(1, 2, base_ch=16, img_size=64, norm=bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"norm={bad!r} must be rejected, not fall back silently")
+
+
+def check_kl_annealing_schedule():
+    """The journal paper anneals beta: zero for the first 10 epochs, then linear
+    to its target over the next 50 (Table 3, "KL Annealing Target 0.0 -> 0.5
+    warm-up over 50 epochs"; Sec. 4, "beta was kept at zero during the first 10
+    epochs"). Its stated reason is that a constant high beta from the start risks
+    posterior collapse.
+
+    ramp_epochs=0 must reproduce the constant-beta behaviour the tagged v0.2.0
+    runs were produced with.
+    """
+    from models import kl_schedule
+
+    assert kl_schedule(1, 0.5, zero_epochs=10, ramp_epochs=50) == 0.0
+    assert kl_schedule(10, 0.5, zero_epochs=10, ramp_epochs=50) == 0.0
+    assert kl_schedule(11, 0.5, zero_epochs=10, ramp_epochs=50) == 0.5 * (1 / 50)
+    assert abs(kl_schedule(35, 0.5, zero_epochs=10, ramp_epochs=50) - 0.25) < 1e-12
+    assert kl_schedule(60, 0.5, zero_epochs=10, ramp_epochs=50) == 0.5
+    assert kl_schedule(200, 0.5, zero_epochs=10, ramp_epochs=50) == 0.5
+
+    for epoch in (1, 10, 60, 200):
+        assert kl_schedule(epoch, 0.059) == 0.059, epoch
+
+    for bad in ((0, 0.5, 10, 50), (-1, 0.5, 10, 50),
+                (5, 0.5, -1, 50), (5, 0.5, 10, -5)):
+        try:
+            kl_schedule(*bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"kl_schedule{bad} must be rejected, not clamped")
+
+
+def check_class_balanced_sampling_weights():
+    """The journal paper's data-balancing strategy is a WeightedRandomSampler with
+    P proportional to 1/N_class, so every minibatch is class balanced (Table 3).
+
+    Capping counts with --subset does not achieve this on its own: pore at 40 of
+    1090 training images appears in roughly one batch in three at batch_size=8, so
+    most gradient updates carry no minority-class signal at all.
+    """
+    import torch
+    from data import balanced_sample_weights
+
+    labels = [0] * 90 + [1] * 10
+    weights = balanced_sample_weights(labels)
+    assert len(weights) == len(labels)
+    assert abs(weights[0] - 1 / 90) < 1e-12, weights[0]
+    assert abs(weights[90] - 1 / 10) < 1e-12, weights[90]
+    assert balanced_sample_weights([]) == []
+
+    torch.manual_seed(0)
+    sampler = torch.utils.data.WeightedRandomSampler(weights, num_samples=40000,
+                                                     replacement=True)
+    drawn = [labels[i] for i in sampler]
+    minority_freq = drawn.count(1) / len(drawn)
+    assert abs(minority_freq - 0.5) < 0.02, minority_freq
+
+
 if __name__ == "__main__":
     import torch
 
@@ -548,6 +671,9 @@ if __name__ == "__main__":
     check_no_leakage_splits(tmp)
     check_paper_decoder_and_loss()
     check_hinge_losses_and_bounded_score()
+    check_discriminator_normalisation_choice()
+    check_kl_annealing_schedule()
+    check_class_balanced_sampling_weights()
     check_feature_aggregation_fanin()
     check_perceptual_loss()
     check_fid_input_preprocessing()
@@ -557,10 +683,14 @@ if __name__ == "__main__":
     check_synthetic_prefix_nesting()
     check_generated_class_manifest(tmp)
 
+    # Three epochs with --kl_warmup 1,1 so the run passes through both the
+    # zero-beta phase (epoch 1) and the ramp (epochs 2-3).
     run(["--data_root", root, "--img_size", "64", "--latent_dim", "8", "--base_ch", "16",
-         "--epochs", "2", "--batch_size", "8", "--subset", "good=8,defect=4",
+         "--epochs", "3", "--batch_size", "8", "--subset", "good=8,defect=4",
          "--val_per_class", "4", "--fid_every", "1", "--sample_every", "2",
-         "--num_workers", "0", "--out_dir", str(tmp / "runs" / "joint")], "train_joint")
+         "--num_workers", "0", "--d_norm", "group", "--weighted_sampler",
+         "--kl_warmup", "1,1", "--monitor", "val_recon",
+         "--out_dir", str(tmp / "runs" / "joint")], "train_joint")
 
     run(["--ckpt", str(tmp / "runs" / "joint" / "joint.pt"),
          "--out_root", str(tmp / "smoke_gen"), "--counts", "good=4,defect=4"], "generate")
