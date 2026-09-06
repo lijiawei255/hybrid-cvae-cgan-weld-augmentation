@@ -752,6 +752,40 @@ python src/train_joint.py --data_root data/lohi \
   --fid_every 5 --sample_every 10 --out_dir runs/probe_eq_g0.1
 ```
 
+The downstream sweep in the subsection above needs a generated pool first. The
+counts are exactly what balance-to-max requires at `N_max = 600` - each class is
+filled from its real subset count up to 600, which is why `stain` needs none -
+and lower ratios draw a prefix of the same pool rather than a second generation.
+
+```bash
+# Pool for the measured arm.
+python src/generate.py --ckpt runs/paper2_gn_wrs/joint.pt --seed 42 \
+  --out_root generated_paper2 \
+  --counts "deposit=450,discontinuity=300,pore=560,stain=0"
+
+# Its 5-ratio sweep. --ratios, --epochs 100, --img_size 224, --test_frac 0.2 and
+# --seed 42 are all defaults and are left implicit; --channels is not (default 1).
+python src/train_classifier.py --data_root data/lohi --gen_root generated_paper2 \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --channels 3 --out_dir runs/sweep_paper2_s42
+```
+
+The matched control that caveat 1 asks for is the same two commands pointed at
+`runs/probe_eq_g0.1`, into its own pool directory - `verify_generation_meta`
+refuses to sweep a pool whose `subset`, `seed` or `test_frac` disagree with the
+sweep's, and `generate.py` writes the seed from the checkpoint, so pool and sweep
+have to be produced as a matched pair rather than reused across arms.
+
+```bash
+python src/generate.py --ckpt runs/probe_eq_g0.1/joint.pt --seed 42 \
+  --out_root generated_ctrl \
+  --counts "deposit=450,discontinuity=300,pore=560,stain=0"
+
+python src/train_classifier.py --data_root data/lohi --gen_root generated_ctrl \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --channels 3 --out_dir runs/sweep_ctrl_s42
+```
+
 ## 10. The downstream classifier is not bit-reproducible, and it scores the final epoch
 
 Two properties of `train_classifier.py` bound how every filling-rate number in
