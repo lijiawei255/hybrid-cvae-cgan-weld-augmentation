@@ -9,7 +9,14 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
-## [Unreleased]
+## v0.3.0 - 2026-09-07
+
+Documentation, multi-seed verification and audit release. The pipeline is
+unchanged from v0.2.0; what moves here is the *reading* of its results (the
+three-seed sweep supersedes v0.2.0's single-seed "non-transfer" conclusion),
+the journal-extension switches that make the recommended configuration
+expressible, a bilingual README, regenerated showcase figures, and citation /
+doc accuracy fixes from a post-release audit.
 
 ### Added
 
