@@ -676,6 +676,24 @@ than dropped, and excluded from the monotonicity claim.
    conjecture that flooding at r=1.0 failed because "our samples are blurrier than
    the papers'" is *consistent* with this result, not demonstrated by it: the axis
    that moved is reconstruction, and FID did not follow.
+
+   FID's direction here depends on which pair and which statistic is taken, and
+   qualification 2 above reports the opposite sign, so all three measured
+   comparisons are stated rather than one being picked:
+
+   | comparison | statistic | this arm | reference | direction |
+   |---|---|---|---|---|
+   | vs v0.2.0 (`runs/joint_lohi`) | FID at each arm's own best-val epoch | 215.99 | 216.87 | unchanged |
+   | vs v0.2.0 (`runs/joint_lohi`) | minimum FID over the run | 191.93 | 184.84 | worse |
+   | vs the matched latent-128 BatchNorm control (`runs/probe_eq_g0.1`) | minimum FID over the run | 191.93 | 142.29 | worse |
+
+   The at-best-epoch comparison against v0.2.0 is the only one in which FID does
+   not move. Note also that the two 70-epoch arms computed FID on only 14 of 70
+   epochs, so their minima are sampled, not exhaustive; v0.2.0 computed it every
+   epoch over 25. None of this changes the conclusion - FID is a diagnostic here,
+   not an acceptance criterion - but it does mean "FID got worse" and "FID did not
+   move" are both defensible statements about the same two checkpoints, and any
+   reuse of them has to say which comparison is meant.
 3. *Single seed.* Section 10 measures run-to-run spread of 0.034 pore F1 and 0.009
    macro-F1 at fixed seed. The r=1.0 deltas clear that comfortably; the r=0.5 and
    r=0.75 deltas (+0.041 and +0.015 pore F1) do not clear it decisively and should

@@ -68,9 +68,15 @@ them. This file keeps only the conclusions.
   both READMEs rather than by editing the published table: the new configuration
   differs from v0.2.0 in five respects at once, the matched latent-128 BatchNorm
   control has not been swept, its r=0.25 arm was invalidated by a final-epoch
-  loss spike, and it is a single seed. Best FID is effectively unchanged against
-  v0.2.0 (215.99 vs 216.87) even though best `val_recon` improved 2.8x (0.0177 vs
-  0.0494), so "better generator" holds on the reconstruction axis only.
+  loss spike, and it is a single seed. FID at each arm's own best-validation epoch
+  is effectively unchanged against v0.2.0 (215.99 vs 216.87) even though best
+  `val_recon` improved 2.8x (0.0177 vs 0.0494), so "better generator" holds on the
+  reconstruction axis only. Taking the minimum FID over each run instead reverses
+  that reading (191.93 vs 184.84 against v0.2.0, and 191.93 vs 142.29 against the
+  matched latent-128 BatchNorm control); all three comparisons are tabulated in
+  `docs/CALIBRATION.md` section 9, because FID is a diagnostic here rather than an
+  acceptance criterion and its direction depends on which pair and statistic is
+  used.
 
 ### Fixed
 
