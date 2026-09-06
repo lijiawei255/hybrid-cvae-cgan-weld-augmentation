@@ -40,7 +40,7 @@ blurry.
 
 - This repository is an **independent re-implementation based solely on the published paper**. It is **not affiliated with, endorsed by, or connected to the original authors or their institutions**.
 - The original authors' WAAM dataset is proprietary and **was not used, accessed, or requested** for this project.
-- All experiments here run on **publicly available, openly licensed datasets** (see `DATA_SOURCES.md`). Each dataset's own license applies; attribution notices are kept in the data download instructions.
+- All experiments here run on **publicly available, openly licensed datasets** (see the Data section below). Each dataset's own license applies; attribution notices are kept in the data download instructions.
 - No figures, tables, or text from the paper are reproduced in this repository.
 - This project re-implements a *method*, and does **not** claim to reproduce the paper's experimental results or reported numbers.
 
@@ -304,19 +304,31 @@ imbalance - close to the conference paper's 14.7x.
 
 It ships as detection data (image + YOLO label pairs), so
 `src/prepare_yolo_crops.py` crops each annotated box into class folders; that
-crop is also the papers' ROI-extraction preprocessing step. See
-`DATA_SOURCES.md` for the exact preparation command, per-class counts, and the
-license terms.
+crop is also the papers' ROI-extraction preprocessing step. After downloading
+LoHi-WELD, prepare it with:
+
+```bash
+python src/prepare_yolo_crops.py \
+  --input_root /path/to/LoHi-WELD \
+  --out_root data/lohi \
+  --classes "pore,deposit,discontinuity,stain" \
+  --img_size 224 --channels 3 --margin 0.1
+```
+
+This produces 8,012 crops: deposit 1,193, discontinuity 2,975, pore 304,
+stain 3,540 (imbalance ratio ~11.6x). The current experiments use a small,
+imbalanced `--subset` of this full tree rather than all 8,012 images.
 
 **RIAWELC** (X-ray radiographs) was used by v0.1.0 and by the generator
 calibration record, and is now a historical footnote only - no current number
 derives from it. Its citation is retained because those already-public results
-used it. See `DATA_SOURCES.md`.
+used it. It is available from the dataset authors' repository; prepare it by
+merging the split-prefixed class folders into `LP`, `PO`, `CR`, and `ND`
+subfolders.
 
 No dataset is bundled here, and none should ever be committed - `data/`,
-`generated/`, `runs/` and `*.pt` are git-ignored by design. See
-`DATA_SOURCES.md` for download links, usage terms, and license-clean
-alternatives.
+`generated/`, `runs/` and `*.pt` are git-ignored by design. Download links and
+license terms are on each dataset's own repository page.
 
 ## Limitations and honest caveats
 
@@ -345,9 +357,9 @@ Read this before quoting any number from this repo.
   resolution and reference set from any published FID. Compare curves within this
   repo, never across repos.
 - **Four hyperparameters were calibrated, not copied.** The KL weight (0.015 vs
-  the paper's 30), the discriminator learning rate, the FFT denoising step (off),
-  and the resolution (224 vs 400) each differ from the conference paper for
-  measured reasons. The adversarial objective follows the **journal extension**
+  the paper's 30), the discriminator learning rate, the FFT denoising step (off,
+  measured near no-op), and the resolution (224 vs 400) each differ from the
+  conference paper for measured reasons. The adversarial objective follows the **journal extension**
   (hinge + spectral normalisation) rather than the conference paper's BCE
   minimax, because the unbounded BCE term destroyed reconstruction at this data
   scale. Evidence and reproduction commands:
@@ -370,9 +382,12 @@ Read this before quoting any number from this repo.
 - **Temporal/sequence augmentation is out of scope.** The journal augments and
   evaluates 21-frame sequences; this repo generates and evaluates single frames,
   because both substitute datasets are static images.
-- **The reported runs do not include the paper's FFT denoising step.** It is
-  implemented (`--fft_denoise`) but off: measured unnecessary on RIAWELC and
-  untested on LoHi-WELD. So the v0.2.0 numbers describe the pipeline *without*
+- **The reported runs leave the paper's FFT denoising step off.** It is
+  implemented (`--fft_denoise`) and has been measured as a near no-op on both
+  datasets used here. On LoHi-WELD the crops keep 99.2-99.9% of spectral energy
+  inside normalised radius 0.1, so at the paper's `cutoff = 0.25` the filter
+  retains 0.0% of the mid-band and changes the image by only 3-14 MSE on the
+  [0, 255] scale. The v0.2.0 numbers therefore describe the pipeline *without*
   that preprocessing step.
 - **Structure vs objective come from different papers.** The training structure
   (single-phase joint model, Sub-Pixel decoder, 70 epochs, lr 1e-3) follows the
@@ -393,7 +408,7 @@ Read this before quoting any number from this repo.
 ## Reusing this work
 
 Want to generate your own training data? Prepare class-folder images (or pull
-LoHi-WELD per `DATA_SOURCES.md`), run `src/train_joint.py`, then sample with
+LoHi-WELD per the Data section above), run `src/train_joint.py`, then sample with
 `src/generate.py` using per-class counts from `src/augment.py`. Images generated
 by models you train are yours to use; the code is MIT-licensed. A link back to
 this repo is appreciated but not required.
