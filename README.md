@@ -2,7 +2,13 @@
 
 An **unofficial, method-level re-implementation attempt** of the hybrid CVAE-CGAN framework proposed in:
 
-> J. Yang, L. Yuan, H. Mu, F. He, D. Ding, ..., Z. Pan, *"Generation of WAAM Defect Images Using a Hybrid CVAE-CGAN: A Data Augmentation Strategy for Small and Imbalanced Datasets"*, IEEE conference paper, 2025 (IEEE Xplore doc. no. 11168313).
+> Junle Yang, Lei Yuan, Haochen Mu, Fengyang He, Donghong Ding, Zengxi Pan, Huijun Li, *"Generation of WAAM Defect Images Using a Hybrid CVAE-CGAN: A Data Augmentation Strategy for Small and Imbalanced Datasets"*, Proc. 15th IEEE Int. Conf. on CYBER Technology in Automation, Control, and Intelligent Systems (CYBER 2025), Shanghai, China, 15-18 July 2025. DOI: [10.1109/CYBER67662.2025.11168313](https://doi.org/10.1109/CYBER67662.2025.11168313)
+
+Architecture and hyperparameter details that the conference paper omits are taken from the journal extension by the same first author:
+
+> Junle Yang, Lei Yuan, Fengyang He, Zening Wu, Donghong Ding, Zengxi Pan, Huijun Li, *"Physics-guided generative data augmentation for vision-based signal processing under class-imbalanced conditions in directed energy deposition monitoring system"*, Mechanical Systems and Signal Processing, vol. 250, article 114138, 2026. **Open access (CC BY 4.0)**: DOI: [10.1016/j.ymssp.2026.114138](https://doi.org/10.1016/j.ymssp.2026.114138)
+
+If this repository is useful to you, please cite **those original papers** rather than this repo - they are the source of the method, and this re-implementation exists to point people toward them.
 
 This repo exists as a **public reference for anyone attempting a similar
 reproduction**: it documents what was re-implemented from the paper, which
@@ -10,9 +16,20 @@ public substitute dataset was used, and where the implementation diverges
 from the original.
 
 The method generates class-conditional weld defect images to augment small and
-imbalanced datasets. Training follows two stages: a Conditional VAE learns the
-class-conditional image distribution, then its decoder is reused as the
-generator of a conditional GAN for adversarial sharpening.
+imbalanced datasets. It is a **single jointly-trained hybrid model**, not a
+two-stage pipeline: one decoder acts as the CVAE decoder `D(z, y)` and as the
+CGAN generator `G(z, y)` at the same time, which is what "hybrid" means here.
+Training minimises a combined objective
+
+```
+L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversarial
+```
+
+with the generator and discriminator updated alternately inside each minibatch
+using separate backward passes. The KL term shapes the latent space toward
+`N(0, I)` so that sampling `z ~ N(0, I)` with a class label works at generation
+time; the perceptual and adversarial terms sharpen what a pure VAE would leave
+blurry.
 
 ## Disclaimer
 
@@ -27,23 +44,117 @@ generator of a conditional GAN for adversarial sharpening.
 ```bash
 pip install -r requirements.txt
 
-# Stage 1: train the CVAE
-python src/train_cvae.py --data_root data --img_size 128 --epochs 100
-
-# Stage 2: adversarial fine-tuning (G initialized from the CVAE decoder)
-python src/train_cgan.py --data_root data --cvae_ckpt runs/cvae/cvae.pt --epochs 200
-
-# Generate class-conditional images
-python src/generate.py --ckpt runs/cgan/cgan.pt --per_class 1000
-
-# FID evaluation
-python src/eval_fid.py --real_root data --fake_root generated
-
-# 1-minute end-to-end sanity check on synthetic data
+# Sanity check on synthetic data - run this after ANY code change.
 python src/smoke_test.py
+
+# Train the joint model. --subset is keyed by class NAME and defines the small
+# imbalanced training set; the held-out test split is carved off first, so the
+# generator never sees it.
+python src/train_joint.py --data_root data/lohi \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
+  --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 32 \
+  --lr 1e-3 --lr_d 1e-3 --kl_weight 0.015 --perc_weight 0.1 --adv_weight 0.1 \
+  --out_dir runs/joint_lohi
+
+# Generate the balance-to-max pool: what filling rate 1.0 needs per class.
+# Class names are read from the checkpoint and verified, never assumed.
+python src/generate.py --ckpt runs/joint_lohi/joint.pt \
+  --counts "pore=560,deposit=450,discontinuity=300,stain=0" --out_root generated
+
+# Downstream sweep: one from-scratch classifier per filling rate, every run
+# evaluated on the same held-out real test set.
+python src/train_classifier.py --data_root data/lohi --gen_root generated \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --ratios "0.0,0.25,0.5,0.75,1.0" --channels 3 --epochs 100 --out_dir runs/sweep
+
+# Paper-style figures (training curves, filling-rate sensitivity, latent t-SNE,
+# real/reconstruction/generated, confusion matrices, class distribution).
+python src/make_paper_figures.py --data_root data/lohi \
+  --ckpt runs/joint_lohi/joint.pt --history runs/joint_lohi/history.csv \
+  --sweep runs/sweep/sweep_metrics.csv --cm_dir runs/sweep \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
+  --out_dir results
+
+# Standalone FID between two image trees.
+python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 ```
 
-## Results (this repository's own runs)
+### Using your own dataset
+
+Point `--data_root` at a folder of class subfolders. Nothing else is
+dataset-specific:
+
+- Class identity is expressed **by name** everywhere (`--subset`, `--counts`),
+  and every name is validated against the dataset or checkpoint. An unknown or
+  misspelled class raises instead of silently selecting the wrong one.
+- Choose `--subset` counts from your own per-class counts. The method targets
+  *small and imbalanced* data, so pick a minority count low enough that the task
+  is not already solved, and set the majority count to the `N_max` you want
+  balance-to-max to fill up to.
+- `--channels 3` works for colour data; `--img_size` must be divisible by 16.
+- `--fft_denoise` enables the paper's FFT low-pass preprocessing. It is off by
+  default: measured unnecessary on RIAWELC (band-limited radiographs, see
+  `CHANGELOG.md`) and left untested on LoHi-WELD, where the simpler default was
+  used. Turn it on if your imagery carries high-frequency sensor noise.
+- `--kl_weight` must be rescaled if you change the loss normalisation. See
+  `models.cvae_loss` and the derivation in `CHANGELOG.md`.
+
+## Results - v0.2.0 (LoHi-WELD, current)
+
+Single seed (42). Generator: joint CVAE-CGAN on the paper-scale subset
+(pore 40 / deposit 150 / discontinuity 300 / stain 600), 70 epochs with early
+stopping at 25 (best epoch 15). Diagnostics: FID fell 371 -> 216 and plateaued
+near 200 (diagnostic only, not comparable to any published FID); reconstruction
+MSE 0.049-0.060 against a constant-mean baseline of 0.062; sample grids show
+clear per-class morphology.
+
+**Filling-rate sweep** - one from-scratch ResNet-18 per ratio, 100 epochs each,
+all evaluated on the same held-out real-only test set (1,602 images):
+
+| ratio | accuracy | macro-F1 | weighted-F1 | deposit | discontinuity | pore | stain |
+|---|---|---|---|---|---|---|---|
+| 0.00 (real only) | 0.8222 | 0.6936 | 0.8177 | 0.6521 | 0.9145 | 0.3778 | 0.8301 |
+| **0.25** | **0.8353** | **0.7264** | **0.8306** | 0.6727 | 0.9203 | 0.4731 | 0.8393 |
+| 0.50 | 0.8178 | 0.6767 | 0.8078 | 0.6108 | 0.9097 | 0.3590 | 0.8273 |
+| 0.75 | 0.8141 | 0.7029 | 0.8064 | 0.5957 | 0.8977 | **0.4902** | 0.8281 |
+| 1.00 (balance-to-max) | 0.7392 | 0.6418 | 0.7403 | 0.6199 | 0.7932 | 0.3871 | 0.7669 |
+
+Two findings, reported as measured:
+
+1. **Augmentation helps the minority class.** pore (304 real crops, the scarce
+   class) gains +0.095 F1 at r=0.25 and +0.112 at r=0.75; macro-F1 peaks at
+   r=0.25 with +0.033 over the real-only baseline. This is the method's core
+   claim, demonstrated on a public dataset.
+2. **The papers' balance-to-max recommendation does not transfer here.** r=1.0 is
+   the *worst* ratio (macro-F1 0.642, below the 0.694 baseline), whereas the
+   journal extension reports monotone improvement peaking at 1.0. The likely
+   cause is generator fidelity: at r=1.0 roughly half the training set for three
+   classes is synthetic, and our samples are blurrier than the papers', so
+   flooding dilutes the real signal instead of reinforcing it. Treat
+   "fill to N_max" as a hypothesis to test on your own data, not a default.
+
+Figures in `results/`: `filling_rate_curve.png` (the sweep above),
+`training_curves.png` (loss components and FID per epoch),
+`reconstruction_comparison.png` (real / reconstruction / generated),
+`latent_tsne.png` (encoder latent projection), `confusion_matrices.png`
+(r=0 vs r=1), `class_distribution.png`, plus per-class close-ups
+(`class_*.png`) and the real-vs-generated grid (`real_vs_generated.png`).
+
+**Caveats.** Single seed - treat differences under ~0.02 macro-F1 as noise. The
+downstream classifier is a from-scratch ResNet-18 over single images, not the
+papers' LSTM/GRU over 21-frame sequences, so absolute scores are not comparable
+to the papers'. See the limitations list above and `docs/CALIBRATION.md` for the
+full calibration record.
+
+## Results - v0.1.0 (superseded, do not quote)
+
+> **These numbers come from the deleted two-stage skeleton running on the full
+> dataset, which is not the protocol this repo now follows.** The FID values are
+> additionally **invalid**: they were computed by feeding [0, 1] images to
+> InceptionV3 with `transform_input=False`, which expects [-1, 1], so every
+> activation was off-distribution. They are not comparable to literature FIDs,
+> to each other across that fix, or to the current results. They are kept only
+> because v0.1.0 was published with them. See `CHANGELOG.md`.
 
 Single-seed runs on the full RIAWELC dataset (24,407 images, 128x128, batch
 64). These numbers describe *this* re-implementation on a substitute dataset
@@ -88,40 +199,93 @@ literature values):
 ## Repository layout
 
 ```
-src/models.py           CVAE encoder/decoder + CGAN discriminator (class-conditional)
-src/data.py             class-folder loader + imbalance simulation
-src/train_cvae.py       Stage 1 training
-src/train_cgan.py       Stage 2 adversarial fine-tuning
-src/generate.py         class-conditional sampling
-src/eval_fid.py         FID evaluation (InceptionV3 features)
-src/train_classifier.py downstream augmentation-gain experiment (ResNet-18)
-src/make_comparison.py  real-vs-generated comparison grid into results/
+src/models.py             encoder, decoder (= generator), discriminator, losses
+src/data.py               class-folder loader, FFT denoising, leakage-free splits
+src/augment.py            balance-to-max filling-rate protocol
+src/prepare_yolo_crops.py detection-format datasets -> class-folder crops (+ ROI step)
+src/train_joint.py        joint CVAE-CGAN training (the paper's single phase)
+src/generate.py           class-conditional sampling, counts by class name
+src/eval_fid.py           FID (InceptionV3 features) + input normalisation
+src/train_classifier.py   downstream filling-rate sweep (from-scratch ResNet-18)
+src/make_paper_figures.py training curves, sensitivity curve, t-SNE, confusions
+src/make_comparison.py    real-vs-generated comparison grid into results/
 src/make_class_figures.py compact per-class close-ups with per-class FID
-src/smoke_test.py       end-to-end sanity check on synthetic data
+src/smoke_test.py         unit checks + end-to-end run on synthetic data
 ```
 
 ## Data
 
-Experiments use **[RIAWELC](https://github.com/stefyste/RIAWELC)**: 24,407
-radiographic weld defect images (four classes: LP / PO / CR / ND), released
-freely by its authors with a citation requirement — if you use it, cite the
-two papers listed in `DATA_SOURCES.md`.
+Current experiments use **[LoHi-WELD](https://github.com/SylvioBlock/LoHi-Weld)**
+(Block et al., IEEE Access 2024): 3,022 **visible-light** weld-bead images with
+four defect classes, released for free research and commercial use with
+citation. Like the reproduced papers' melt-pool imagery it is visible-light, and
+its high-resolution beads crop to 8,012 defect patches with an **11.6x** class
+imbalance - close to the conference paper's 14.7x.
 
-Note the modality difference: RIAWELC contains X-ray images, whereas the
-original paper used visible-light melt-pool images. The *method* transfers
-unchanged, but this repo makes no claim about the paper's original imagery.
+It ships as detection data (image + YOLO label pairs), so
+`src/prepare_yolo_crops.py` crops each annotated box into class folders; that
+crop is also the papers' ROI-extraction preprocessing step. See
+`DATA_SOURCES.md` for the exact preparation command, per-class counts, and the
+license terms.
 
-No dataset is bundled here, and none should ever be committed — `data/`,
+**RIAWELC** (X-ray radiographs) was used by v0.1.0 and by the generator
+calibration record, and is now a historical footnote only - no current number
+derives from it. Its citation is retained because those already-public results
+used it. See `DATA_SOURCES.md`.
+
+No dataset is bundled here, and none should ever be committed - `data/`,
 `generated/`, `runs/` and `*.pt` are git-ignored by design. See
 `DATA_SOURCES.md` for download links, usage terms, and license-clean
 alternatives.
 
+## Limitations and honest caveats
+
+Read this before quoting any number from this repo.
+
+- **Different data, same modality.** The papers trained on proprietary
+  visible-light melt-pool imagery (1,898 images, 9 classes, up to 14.7x
+  imbalance). This repo uses public LoHi-WELD visible-light weld beads, so the
+  *modality* now matches, but defect semantics, camera geometry and scale still
+  differ. No result here reproduces or validates the papers' numbers.
+- **The "small and imbalanced" condition is simulated.** LoHi-WELD's 8,012
+  crops at 11.6x imbalance are larger and milder than the papers' setting, so
+  the headline experiment draws a small imbalanced subset
+  (`--subset "pore=40,deposit=150,discontinuity=300,stain=600"`, 15x imbalance,
+  balance-to-max target 600) to recreate the papers' conditions. Those counts
+  are a parameter you should set from your own dataset, not a property of the
+  method.
+- **The downstream classifier is not the papers' classifier.** Both papers
+  evaluate LSTM/GRU models over 21-frame temporal sequences. Static weld-bead
+  images have no temporal axis, so sequences cannot be constructed; a
+  from-scratch ResNet-18 over single images is substituted, honouring the
+  papers' stated preference for lightweight non-pretrained models. Accuracy and
+  F1 values are
+  therefore not comparable to the papers' - only the protocol is.
+- **FID is a trend indicator here, not an absolute score.** Different dataset,
+  resolution and reference set from any published FID. Compare curves within this
+  repo, never across repos.
+- **Four hyperparameters were calibrated, not copied.** The KL weight (0.015 vs
+  the paper's 30), the discriminator learning rate, the FFT denoising step (off),
+  and the resolution (224 vs 400) each differ from the conference paper for
+  measured reasons. The adversarial objective follows the **journal extension**
+  (hinge + spectral normalisation) rather than the conference paper's BCE
+  minimax, because the unbounded BCE term destroyed reconstruction at this data
+  scale. Evidence and reproduction commands:
+  [`docs/CALIBRATION.md`](docs/CALIBRATION.md).
+- **Single seed.** Every reported number is one run at seed 42. GAN training at
+  this scale is noisy; treat differences under a few points as within noise.
+- **Leakage-free by construction.** The generator never sees the classifier's
+  held-out test images. This is stricter than strictly necessary and is the
+  honest reading of the papers' "real, unseen images"; it also means the reported
+  gain, if any, is not inflated by test-set information.
+
 ## Reusing this work
 
 Want to generate your own training data? Prepare class-folder images (or pull
-RIAWELC per `DATA_SOURCES.md`), train Stage 1 then Stage 2, and sample with
-`src/generate.py`. Images generated by models you train are yours to use; the
-code is MIT-licensed. A link back to this repo is appreciated but not required.
+LoHi-WELD per `DATA_SOURCES.md`), run `src/train_joint.py`, then sample with
+`src/generate.py` using per-class counts from `src/augment.py`. Images generated
+by models you train are yours to use; the code is MIT-licensed. A link back to
+this repo is appreciated but not required.
 
 ## License
 
@@ -129,26 +293,71 @@ Code: [MIT](LICENSE). Third-party datasets remain under their own licenses.
 
 ## How to cite
 
-If this re-implementation helps your work, cite the **original paper** and the
-dataset (GitHub's "Cite this repository" widget shows both). Citing this
-repository itself is optional.
+If this re-implementation helps your work, cite the **original papers** and the
+**datasets** rather than this repo. GitHub's "Cite this repository" widget and
+[`CITATION.cff`](CITATION.cff) list all five entries.
 
 ```bibtex
+% --- Primary method reference (conference paper being re-implemented) ---
 @inproceedings{yang2025hybridcvaecgan,
-  title  = {Generation of WAAM Defect Images Using a Hybrid CVAE-CGAN:
-            A Data Augmentation Strategy for Small and Imbalanced Datasets},
-  author = {Yang, Junle and Yuan, Lei and Mu, Haonan and He, Feng and
-            Ding, Donghong and Pan, Zengxi and others},
-  year   = {2025},
-  note   = {IEEE conference paper, IEEE Xplore doc. no. 11168313}
+  title     = {Generation of WAAM Defect Images Using a Hybrid CVAE-CGAN:
+               A Data Augmentation Strategy for Small and Imbalanced Datasets},
+  author    = {Yang, Junle and Yuan, Lei and Mu, Haochen and He, Fengyang and
+               Ding, Donghong and Pan, Zengxi and Li, Huijun},
+  booktitle = {Proc. 15th IEEE International Conference on CYBER Technology
+               in Automation, Control, and Intelligent Systems (CYBER 2025)},
+  address   = {Shanghai, China},
+  month     = jul,
+  year      = {2025},
+  doi       = {10.1109/CYBER67662.2025.11168313}
 }
 
+% --- Secondary method reference (journal extension; supplies the details
+% --- the conference paper omits). Open access under CC BY 4.0. ---
+@article{yang2026physicsguided,
+  title   = {Physics-guided generative data augmentation for vision-based
+             signal processing under class-imbalanced conditions in directed
+             energy deposition monitoring system},
+  author  = {Yang, Junle and Yuan, Lei and He, Fengyang and Wu, Zening and
+             Ding, Donghong and Pan, Zengxi and Li, Huijun},
+  journal = {Mechanical Systems and Signal Processing},
+  volume  = {250},
+  pages   = {114138},
+  year    = {2026},
+  doi     = {10.1016/j.ymssp.2026.114138}
+}
+
+% --- Both RIAWELC citations below are mandatory usage terms of the dataset ---
 @inproceedings{totino2022riawelc,
   title     = {RIAWELC: A Novel Dataset of Radiographic Images for
                Automatic Weld Defects Classification},
   author    = {Totino, Benito and Spagnolo, Fanny and Perri, Stefania},
   booktitle = {Proc. Interdisciplinary Conference on Mechanics, Computers
                and Electrics (ICMECE 2022)},
+  address   = {Barcelona, Spain},
+  month     = oct,
   year      = {2022}
+}
+
+@article{perriweldingdefects,
+  title   = {Welding Defects Classification Through a Convolutional
+             Neural Network},
+  author  = {Perri, Stefania and Spagnolo, Fanny and Frustaci, Fabio and
+             Corsonello, Pasquale},
+  journal = {Manufacturing Letters},
+  note    = {In press, Elsevier. Recorded as "in press" by the RIAWELC
+             repository, so no year, volume or pages are asserted here}
+}
+
+% --- Visible-light weld defect dataset intended as the primary experiment ---
+@article{block2024lohiweld,
+  title   = {LoHi-WELD: A Novel Industrial Dataset for Weld Defect Detection
+             and Classification, a Deep Learning Study, and Future
+             Perspectives},
+  author  = {Block, Sylvio Biasuz and Dutra da Silva, Ricardo and
+             Lazzaretti, Andre Eugenio and Minetto, Rodrigo},
+  journal = {IEEE Access},
+  year    = {2024},
+  doi     = {10.1109/ACCESS.2024.3407019}
 }
 ```

@@ -3,3 +3,6 @@ torchvision>=0.17
 numpy
 Pillow
 scipy
+matplotlib
+scikit-learn
+pyyaml

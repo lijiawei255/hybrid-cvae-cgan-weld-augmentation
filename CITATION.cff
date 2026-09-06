@@ -1,11 +1,14 @@
 cff-version: 1.2.0
-message: "If you use this code, please cite the original paper below. This repository is an unofficial re-implementation."
+message: "If you use this code, please cite the original papers below. This repository is an unofficial re-implementation and is not affiliated with, endorsed by, or connected to the original authors or their institutions."
 title: "Unofficial re-implementation of a hybrid CVAE-CGAN for WAAM defect image augmentation"
 type: software
 authors:
   - family-names: "lijiawei255"
 license: MIT
 references:
+  # ---------------------------------------------------------------------
+  # Primary method reference: the conference paper this repo re-implements.
+  # ---------------------------------------------------------------------
   - type: conference-paper
     title: "Generation of WAAM Defect Images Using a Hybrid CVAE-CGAN: A Data Augmentation Strategy for Small and Imbalanced Datasets"
     authors:
@@ -14,15 +17,51 @@ references:
       - family-names: "Yuan"
         given-names: "Lei"
       - family-names: "Mu"
-        given-names: "Haonan"
+        given-names: "Haochen"
       - family-names: "He"
-        given-names: "Feng"
+        given-names: "Fengyang"
       - family-names: "Ding"
         given-names: "Donghong"
       - family-names: "Pan"
         given-names: "Zengxi"
+      - family-names: "Li"
+        given-names: "Huijun"
     year: 2025
-    notes: "IEEE conference paper, IEEE Xplore document no. 11168313"
+    doi: "10.1109/CYBER67662.2025.11168313"
+    collection-title: "Proc. 15th IEEE International Conference on CYBER Technology in Automation, Control, and Intelligent Systems (CYBER 2025)"
+    notes: "Shanghai, China, 15-18 July 2025. IEEE Xplore document no. 11168313. Primary method reference for this re-implementation."
+
+  # ---------------------------------------------------------------------
+  # Journal extension by the same first author. Used to fill in the
+  # architecture and hyperparameter details the conference paper omits.
+  # ---------------------------------------------------------------------
+  - type: article
+    title: "Physics-guided generative data augmentation for vision-based signal processing under class-imbalanced conditions in directed energy deposition monitoring system"
+    authors:
+      - family-names: "Yang"
+        given-names: "Junle"
+      - family-names: "Yuan"
+        given-names: "Lei"
+      - family-names: "He"
+        given-names: "Fengyang"
+      - family-names: "Wu"
+        given-names: "Zening"
+      - family-names: "Ding"
+        given-names: "Donghong"
+      - family-names: "Pan"
+        given-names: "Zengxi"
+      - family-names: "Li"
+        given-names: "Huijun"
+    year: 2026
+    doi: "10.1016/j.ymssp.2026.114138"
+    journal: "Mechanical Systems and Signal Processing"
+    volume: 250
+    notes: "Article no. 114138. Open access under CC BY 4.0. Secondary method reference; supplies the architecture and hyperparameter details the conference paper omits."
+
+  # ---------------------------------------------------------------------
+  # The two citations required by the RIAWELC dataset authors. Both are
+  # mandatory usage terms of the dataset, not optional attribution.
+  # ---------------------------------------------------------------------
   - type: conference-paper
     title: "RIAWELC: A Novel Dataset of Radiographic Images for Automatic Weld Defects Classification"
     authors:
@@ -33,4 +72,34 @@ references:
       - family-names: "Perri"
         given-names: "Stefania"
     year: 2022
-    notes: "ICMECE 2022. Source of the public dataset used in this re-implementation; citing it is a usage requirement of the dataset."
+    collection-title: "Proc. Interdisciplinary Conference on Mechanics, Computers and Electrics (ICMECE 2022)"
+    notes: "Barcelona, Spain, 6-7 October 2022. Source of the public dataset used in this re-implementation; citing it is a usage requirement of the dataset."
+  - type: article
+    title: "Welding Defects Classification Through a Convolutional Neural Network"
+    authors:
+      - family-names: "Perri"
+        given-names: "Stefania"
+      - family-names: "Spagnolo"
+        given-names: "Fanny"
+      - family-names: "Frustaci"
+        given-names: "Fabio"
+      - family-names: "Corsonello"
+        given-names: "Pasquale"
+    journal: "Manufacturing Letters"
+    publisher: "Elsevier"
+    notes: "Second citation required by the RIAWELC dataset authors. Recorded as 'in press' by the dataset repository, so no year, volume or pages are asserted here rather than inventing bibliographic details."
+  - type: article
+    title: "LoHi-WELD: A Novel Industrial Dataset for Weld Defect Detection and Classification, a Deep Learning Study, and Future Perspectives"
+    authors:
+      - family-names: "Block"
+        given-names: "Sylvio Biasuz"
+      - family-names: "Dutra da Silva"
+        given-names: "Ricardo"
+      - family-names: "Lazzaretti"
+        given-names: "Andre Eugenio"
+      - family-names: "Minetto"
+        given-names: "Rodrigo"
+    year: 2024
+    doi: "10.1109/ACCESS.2024.3407019"
+    journal: "IEEE Access"
+    notes: "Source of the visible-light weld defect dataset intended as the primary experiment. Citing it is a usage requirement of the dataset."
