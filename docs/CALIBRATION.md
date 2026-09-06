@@ -110,7 +110,7 @@ why our generations lack fidelity - is withdrawn as unsupported.** The measured
 ceiling is dataset provenance: LoHi-WELD's crops are upsamples of small source
 boxes and 99.2 - 99.9% of their spectral energy sits inside r < 0.10
 (sections 3 and 4). No latent width, no beta and no adversarial weight can
-generate detail the source pixels never contained. See `DATA_SOURCES.md`.
+generate detail the source pixels never contained. See the Data section in `README.md`.
 
 **Reproduce.**
 
@@ -437,7 +437,7 @@ It is not a clean success: crack (CR) and no-defect (ND) columns stay near-flat,
 consistent with RIAWELC's band-limited, low-contrast radiographs carrying very
 little high-frequency signal for those classes. That dataset property - not the
 optimiser - is the likely ceiling here, and is the reason the primary experiment
-moved to a visible-light dataset (see `DATA_SOURCES.md`).
+moved to a visible-light dataset (see the Data section in `README.md`).
 
 > **Partly superseded by section 9.** Two claims in this section were later
 > measured to be wrong or incomplete. First, G1's `loss_d ~1.0-1.2` is described

@@ -73,7 +73,7 @@ references:
         given-names: "Stefania"
     year: 2022
     collection-title: "Proc. Interdisciplinary Conference on Mechanics, Computers and Electrics (ICMECE 2022)"
-    notes: "Barcelona, Spain, 6-7 October 2022. Source of the public dataset used in this re-implementation; citing it is a usage requirement of the dataset."
+    notes: "Barcelona, Spain, 6-7 October 2022. Historical dataset used by v0.1.0 and the generator calibration record; the current implementation uses LoHi-WELD instead. The citation is retained because those already-public results used it."
   - type: article
     title: "Welding Defects Classification Through a Convolutional Neural Network"
     authors:
