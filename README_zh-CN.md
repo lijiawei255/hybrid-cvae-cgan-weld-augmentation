@@ -24,6 +24,12 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 
 生成器与判别器在每个 minibatch 内交替更新、各自反向传播。KL 项把隐空间塑向 `N(0, I)`，使得生成阶段用 `z ~ N(0, I)` 加类标签采样可行；感知项与对抗项负责锐化纯 VAE 会留下的模糊。
 
+## 本仓库是什么、不是什么
+
+本仓库是对 Yang 等人所述 hybrid CVAE-CGAN 训练与增广协议的**忠实、从零开始的复现**，面向想要引用、验证或扩展该方法的研究者。
+
+它**不是**原作者的代码、通用图像生成库，或可用于无关数据集的即插即用工具。绝对数字与本文使用的替代数据集（LoHi-WELD，以及早期提交中的 RIAWELC）以及一个从零训练的 ResNet-18 分类器绑定，因此不可直接与论文的专有结果比较。
+
 ## 免责声明
 
 - 本仓库是**仅基于已发表论文的独立复现**，**与原作者及其机构无隶属、背书或任何关联**。
@@ -89,6 +95,24 @@ python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 
 同时启用 `--d_norm group --weighted_sampler` 就是 `docs/CALIBRATION.md` 第 9 节实测的那个配置。复用其中数字前请先读该节的两条限定：那一臂同时改了两个变量，因此两个效果都没有被单独归因；并且它的 FID 变差而重建变好。
 
+### 推荐配置
+
+LoHi-WELD 的推荐生成器配置（本仓库中最好的下游结果）：
+
+```bash
+python src/train_joint.py \
+  --data_root data/lohi \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --val_per_class 200 \
+  --img_size 224 --channels 3 \
+  --latent_dim 128 --kl_weight 0.059 \
+  --d_norm group --weighted_sampler \
+  --epochs 70 --seed 42 \
+  --out_dir runs/joint_lohi_recommended
+```
+
+这是期刊扩展版的配置，它反转了本复现中 r=1.0 balance-to-max 的结论。如果你只能跑一个生成器设置，从这里开始；但仍需为你自己的数据扫描 `r`。
+
 ### 使用你自己的数据集
 
 把 `--data_root` 指向一个"类名子文件夹"结构即可。其余均与数据集无关：
@@ -98,6 +122,15 @@ python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 - `--channels 3` 适用于彩色数据；`--img_size` 必须能被 16 整除。
 - `--fft_denoise` 启用论文的 FFT 低通预处理。默认关闭，且在本仓库使用的两个数据集上都实测接近空操作。RIAWELC 的放射图本身频带受限。LoHi-WELD 的裁剪块把 99.2–99.9% 的频谱能量放在归一化半径 0.1 以内，因此在论文的 `cutoff = 0.25` 下，滤波对缺陷边缘所在中频段的保留率为 **0.0%**，对图像的改变在 [0, 255] 尺度上仅为 MSE 3–14（上限为 65,025）。它在那里之所以无效，是因为这些裁剪块本身就是小源框的上采样，而上采样无法创造高频内容——所以滤波主要做的是让*目标*更平滑。它带来的任何表面提升都应读作"任务变简单了"，而非"方法变强了"。见 `docs/CALIBRATION.md` 第 3 节。若你自己的图像带有真实的高频传感器噪声，可以打开；同时请也给 `src/eval_fid.py` 传该参数，否则 FID 测到的是预处理不一致，而不是生成质量。
 - 若你改动损失归一化，`--kl_weight` 必须重新换算。见 `models.cvae_loss` 与 `CHANGELOG.md` 中的推导。
+
+### 迁移检查清单
+
+1. 目录结构：`--data_root` 下每个类一个子文件夹。
+2. 类名在所有地方都使用（`--subset`、`--counts`、生成池元数据）。拼写错误或未知类名会报错。
+3. `--channels 3` 用于 RGB，`--channels 1` 用于灰度；`--img_size` 必须能被 16 整除。
+4. 根据自己的少数类数量和期望的 `N_max` 设置 `--subset`。
+5. 若启用 `--fft_denoise`，请同时传给 `train_joint.py` 和 `eval_fid.py`。
+6. 用与生成器相同的 `--subset`、`--seed` 和 `--test_frac` 重新训练分类器扫描。
 
 ## 结果 - v0.2.0（LoHi-WELD，当前）
 
@@ -119,13 +152,35 @@ python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 2. **论文的 balance-to-max 建议在此不迁移。** r=1.0 是*最差*比例（macro-F1 0.642，低于 0.694 基线），而期刊扩展报告单调改善并在 1.0 达峰。可能原因是生成器保真度：r=1.0 时三个类约一半训练集为合成图，而我们的样本比论文的糊，灌满会稀释真实信号而非强化它。请把"填到 N_max"当作在你自己数据上待检验的假设，而非默认。
 
 > **结论 2 已被部分取代，上方表格按发布原样保留。**
-> 用期刊扩展版的配置（`--d_norm group --weighted_sampler`、`--latent_dim 128`、`--kl_weight 0.059`、跑满 70 epoch）重跑扫描后，**r=1.0 处的结论被反转**：该比例成为曲线上*最好*的一点，macro-F1 0.7168，相对本臂自己的纯真实基线 0.6848 高出 +0.032；pore F1 0.5053，相对已发布的 0.3871 高出 +0.118。在干净跑完的四个比例上，曲线单调上升（0.6848 -> 0.6932 -> 0.7102 -> 0.7168），这正是期刊论文报告、而 v0.2.0 曲线不具备的形状。新扫描的 r=0.25 臂**不是一个有效测量**：其 loss 在最后一个 epoch 尖峰了三个数量级，而分类器评分的正是最后一个 epoch。
+> 在三个彼此独立的生成器/生成池/分类器 seed 上，期刊扩展版配置
+> （`--d_norm group --weighted_sampler`、`--latent_dim 128`、`--kl_weight 0.059`、
+> 跑满 70 epoch）在 r=1.0 的 macro-F1 为 **0.7185 ± 0.0019**，相对
+> 0.6785 ± 0.0447 的纯真实均值高 +0.0399；pore F1 为 **0.4658 ± 0.0475**，
+> 高 +0.1132。这支持 r=1.0 的*平均*正向作用，但不支持单调曲线或 r=1.0
+> 是唯一最优：完整三 seed 的 r=0.50 macro-F1 均值略高（0.7210），而 r=0.25
+> 在两个有效 seed 上为 0.7419。seed 42 的 r=0.25 在最后一个 epoch 出现 loss
+> 尖峰，故只剔除该值，并不令整个 ratio 无效。
 >
-> 请不要把这读成"GroupNorm 修好了 balance-to-max"。新配置与 v0.2.0 同时相差五个方面，而匹配对照——`runs/probe_eq_g0.1` 中那个 latent-128 的 BatchNorm 臂——尚未扫描，因此这次反转还不能归因于两个开关中的任何一个。它也仅是单 seed，而实测的同 seed 重跑波动为 pore F1 0.034。完整数字、两张表与全部四条限定见 `docs/CALIBRATION.md` 第 9 节。
+> 匹配的 latent-128 BatchNorm、未加权采样器对照在 r=1.0 也有正向结果：
+> macro-F1 0.7009，相对 0.6332 的纯真实基线高 +0.0677；pore F1 从 0.4000
+> 升至 0.4222。因此，GroupNorm 和加权采样**不是** r=1.0 符号反转的必要条件。
+> 这仍不能分离 latent dimension、KL weight 与完整训练日程的影响，也不能估计
+> 两个开关各自的增益；该对照只有一个 seed。完整表格和限制见
+> `docs/CALIBRATION.md` 第 9 节。
 
 `results/` 中的图：`filling_rate_curve.png`（上述扫描）、`training_curves.png`（各损失分量与每 epoch FID）、`reconstruction_comparison.png`（真实/重建/生成）、`latent_tsne.png`（编码器隐空间投影）、`confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png`，以及每类特写（`class_*.png`）与真实-生成对照网格（`real_vs_generated.png`）。
 
-**注意事项。** 单 seed，且分类器在 GPU 上并非逐位可复现：`train_classifier.py` 为所有随机源设了种子，但从未启用确定性 CUDA 算法，因此在同 seed 下重复*未改动*的纯真实臂，pore F1 变动了 0.034、macro-F1 变动了 0.009。小于该幅度的差异请在任一方向上都视为噪声——本段此前"~0.02 macro-F1"的估计对少数类过于乐观，而少数类只在 61 张测试图上评分。它还在恒定学习率下评估**最后**一个 epoch，没有早停也没有最佳 epoch 选择，因此一次后期 loss 尖峰就足以让某一臂整体失效。两者均已在 `docs/CALIBRATION.md` 第 10 节实测并解释。另外，下游分类器是单帧图像上从零训练的 ResNet-18，而非论文在 21 帧序列上的 LSTM/GRU，因此绝对分数不可与论文比较。其余标定记录见上文局限列表。
+**已提交的 LoHi-WELD showcase。** 以下示例已随仓库提交，clone 用户无需持有数据集即可查看当前输出格式；它们是定性示例，不构成额外评估证据。
+
+![LoHi-WELD 真实与生成样本](results/real_vs_generated.png)
+
+| deposit | discontinuity |
+|---|---|
+| ![deposit 特写](results/class_deposit.png) | ![discontinuity 特写](results/class_discontinuity.png) |
+| pore | stain |
+| ![pore 特写](results/class_pore.png) | ![stain 特写](results/class_stain.png) |
+
+**注意事项。** 已发布的 v0.2.0 表格仍是单 seed；GroupNorm + 加权采样重跑有三个生成器/生成池/分类器 seed（r=0.25 因 seed 42 的最后 epoch 尖峰而只有 n=2）；匹配的 BatchNorm 对照只有一个 seed。分类器在 GPU 上并非逐位可复现：`train_classifier.py` 为所有随机源设了种子，但从未启用确定性 CUDA 算法，因此同 seed 下重复*未改动*的纯真实臂，pore F1 变动了 0.034、macro-F1 变动了 0.009。它还在恒定学习率下评估**最后**一个 epoch，没有早停或最佳 epoch 选择，因此一次后期 loss 尖峰就足以让某一臂整体失效。两者均已在 `docs/CALIBRATION.md` 第 10 节实测并解释。另外，下游分类器是单帧图像上从零训练的 ResNet-18，而非论文在 21 帧序列上的 LSTM/GRU，因此绝对分数不可与论文比较。其余标定记录见上文局限列表。
 
 ## 结果 - v0.1.0（已被取代，请勿引用）
 
@@ -141,17 +196,7 @@ python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 
 下游增广增益实验（预训练 ResNet-18，分层 80/20 纯真实测试划分，seed 42）：条件 A = 失衡真实子集（每缺陷类保留 20%，约 7.7k 张），条件 B = A + 每缺陷类 1,000 张生成图（约 10.7k）。两条件均达 ~99.4% 测试准确率（macro-F1 0.9931 vs 0.9932）——**该数据集上无可测增广增益**：ImageNet 预训练分类器即使在失衡基线下也几乎完美解决 RIAWELC，任务饱和、没有留给增广的空间。论文的设置（1,898 张专有熔池图、最少每类 36 张）难得多；要演示增益需要更难的替代任务。该负面结果按原样报告。协议说明见 `src/train_classifier.py`；生成器曾在全部真实图上训练，故生成数据可能携带测试图信息（与论文相同的协议局限）。
 
-每类真实 vs 生成样本（上排真实，下排生成）：
-
-![Real vs generated samples](results/real_vs_generated.png)
-
-每类特写（上排真实，下排生成；标题中的数字是该类 FID——越低越好；归一化非标准，因此只可类间互比，不可与文献值比较）：
-
-| CR（裂纹）, FID 71.9 | LP（未焊透）, FID 63.5 |
-|---|---|
-| ![CR close-up](results/class_CR.png) | ![LP close-up](results/class_LP.png) |
-| **PO（气孔）, FID 83.5** | **ND（无缺陷）, FID 14.7** |
-| ![PO close-up](results/class_PO.png) | ![ND close-up](results/class_ND.png) |
+v0.1.0 的 RIAWELC 图像资产已在仓库主实验和已提交 showcase 切换到 LoHi-WELD 时移除。上方历史数值仍保留，但这里不再展示 v0.1.0 样本：当前 `results/` 中的图像属于 LoHi-WELD，不能被重新标注为 RIAWELC。
 
 ## 仓库结构
 

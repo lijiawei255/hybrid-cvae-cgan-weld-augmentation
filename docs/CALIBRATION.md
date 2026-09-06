@@ -617,59 +617,68 @@ minority class inside a 1,090-image subset is 3.7% of draws, so at `batch_size=8
 most minibatches contain no minority sample at all and it contributes to few
 gradient updates.
 
-### The downstream verdict: filling rate 1.0 flips sign
+### The downstream verdict: r=1.0 keeps a positive mean gain, but is not uniquely optimal
 
-Qualification 2 deferred to the filling-rate sweep. It has now been run for this
-arm (`runs/sweep_paper2_s42`, seed 42, pool `generated_paper2`, 1,310 synthetic
-images: pore 560 / deposit 450 / discontinuity 300 / stain 0), against the
-published v0.2.0 curve (`runs/sweep`).
+Qualification 2 deferred to the filling-rate sweep. It has now been run for the
+GroupNorm + balanced-sampler arm at three independently trained generator/pool/
+classifier seeds (`runs/sweep_paper2_s42`, `s43`, and `s44`) and for its matched
+latent-128 BatchNorm, unweighted-sampler control at seed 42
+(`runs/sweep_ctrl_s42_clean`, pool `generated_ctrl`). Each pool has 1,310 synthetic
+images at r=1.0: pore 560 / deposit 450 / discontinuity 300 / stain 0. The
+published v0.2.0 curve remains `runs/sweep`.
 
-macro-F1, and in brackets the gain over **that arm's own** r=0 baseline:
+macro-F1; gains in brackets are over the same column's r=0 baseline:
 
-| ratio | v0.2.0 published | GroupNorm + balanced sampler |
-|---|---|---|
-| 0.00 (real only) | 0.6936 | 0.6848 |
-| 0.25 | **0.7264** (+0.033) | 0.5868 - *invalid, see below* |
-| 0.50 | 0.6767 (-0.017) | 0.6932 (+0.008) |
-| 0.75 | 0.7029 (+0.009) | 0.7102 (+0.025) |
-| 1.00 (balance-to-max) | 0.6418 (**-0.052**, worst) | **0.7168** (**+0.032**, best) |
+| ratio | v0.2.0 published | GroupNorm + balanced sampler (3 seeds) | latent-128 BatchNorm control |
+|---|---|---|---|
+| 0.00 (real only) | 0.6936 | 0.6785 ± 0.0447 | 0.6332 |
+| 0.25 | **0.7264** (+0.033) | 0.7419 ± 0.0181 (n=2) | 0.7123 |
+| 0.50 | 0.6767 (-0.017) | **0.7210 ± 0.0246** (+0.0425) | 0.6341 (+0.0010) |
+| 0.75 | 0.7029 (+0.009) | 0.6972 ± 0.0239 (+0.0187) | **0.7124** (+0.0793) |
+| 1.00 (balance-to-max) | 0.6418 (**-0.052**, worst) | 0.7185 ± 0.0019 (+0.0399) | 0.7009 (+0.0677) |
 
 pore F1, the minority class the whole experiment exists for:
 
-| ratio | v0.2.0 published | GroupNorm + balanced sampler |
-|---|---|---|
-| 0.00 | 0.3778 | 0.3441 |
-| 0.25 | 0.4731 | 0.3039 - *invalid* |
-| 0.50 | 0.3590 | 0.4000 |
-| 0.75 | 0.4902 | **0.5055** |
-| 1.00 | 0.3871 | **0.5053** |
+| ratio | v0.2.0 published | GroupNorm + balanced sampler (3 seeds) | latent-128 BatchNorm control |
+|---|---|---|---|
+| 0.00 | 0.3778 | 0.3527 ± 0.0611 | 0.4000 |
+| 0.25 | 0.4731 | **0.5380 ± 0.0695** (n=2) | 0.4554 |
+| 0.50 | 0.3590 | 0.4554 ± 0.0480 (+0.1028) | 0.2192 (-0.1808) |
+| 0.75 | 0.4902 | 0.4458 ± 0.0541 (+0.0931) | **0.4632** (+0.0632) |
+| 1.00 | 0.3871 | 0.4658 ± 0.0475 (+0.1132) | 0.4222 (+0.0222) |
 
-**The structural result is the sign flip at r=1.0.** In the published curve,
-filling every class to `N_max` was the *worst* ratio, 0.052 macro-F1 below its own
-baseline, and the README concluded that the papers' balance-to-max recommendation
-"does not transfer here". Under this arm r=1.0 is the *best* ratio, 0.032 above
-its own baseline, and pore F1 there is 0.5053 against the published 0.3871 - a
-difference of 0.118, several times the section 10 noise floor. Across the four
-arms that completed cleanly the new curve is **monotone increasing** in filling
-rate (0.6848 -> 0.6932 -> 0.7102 -> 0.7168), which is the shape the journal paper
-reports and the shape the v0.2.0 curve did not have.
+**The supported structural result is narrower than the seed-42 curve.** The
+GroupNorm + balanced-sampler arm has mean r=1.0 macro-F1 0.7185, +0.0399 over
+its r=0 baseline, and mean pore F1 0.4658, +0.1132. The individual r=1.0
+macro-F1 deltas are +0.0321, +0.0895, and -0.0018; it is a positive mean effect,
+not an improvement guaranteed on every seed. The three-seed data do **not**
+establish a monotone curve or a unique optimum at r=1.0: r=0.50 has the slightly
+higher complete-seed macro-F1 mean (0.7210), and r=0.25 is 0.7419 on the two valid
+seeds.
 
-**r=0.25 is not a measurement.** Its training loss sat at 0.0001 by epoch 90, then
-reported 0.2617 at epoch 100, and `train_classifier.py` scores the final epoch
-(section 10). The spiked weights are what was evaluated. It is reported rather
-than dropped, and excluded from the monotonicity claim.
+The matched BatchNorm control preserves the central sign flip: r=1.0 is 0.7009,
++0.0677 over its own 0.6332 real-only baseline, and its pore F1 rises from 0.4000
+to 0.4222. Its curve is also non-monotone and peaks at r=0.75 (0.7124), not r=1.0.
+Together these measurements rule out the claim that GroupNorm or the weighted
+sampler is *required* for the positive r=1.0 result. They do not estimate either
+switch's separate benefit.
+
+**The seed-42 r=0.25 score is invalid, not the whole ratio.** That classifier's
+loss sat at 0.0001 by epoch 90, then reported 0.2617 at epoch 100, and
+`train_classifier.py` scores the final epoch (section 10). Its spiked weights are
+excluded; the r=0.25 GroupNorm statistics therefore aggregate only seeds 43 and
+44 and are marked n=2.
 
 **Four things this does not establish.**
 
-1. *It is not an isolated test of the two switches.* The comparison is against the
-   published v0.2.0 curve, and those two configurations differ in five respects at
-   once: `latent_dim` 32 -> 128, `kl_weight` 0.015 -> 0.059, discriminator
-   BatchNorm -> GroupNorm, balanced sampler off -> on, and early-stopped at 25
-   epochs -> the full 70. The matched control - sweeping the pool from
-   `runs/probe_eq_g0.1`, the latent-128 BatchNorm arm this one was trained against
-   - **has not been run**. Until it is, the r=1.0 flip cannot be attributed to
-   GroupNorm or the sampler rather than to the larger latent or the longer
-   schedule.
+1. *It does not isolate the remaining three configuration changes.* The matched
+   control holds BatchNorm and the unweighted sampler while retaining the
+   latent-128, `kl_weight=0.059`, full-70-epoch configuration. Because its r=1.0
+   gain is positive, the GroupNorm/sampler pair is not necessary for the sign
+   flip. But comparison with published v0.2.0 still changes `latent_dim` 32 ->
+   128, `kl_weight` 0.015 -> 0.059, and early stopping at 25 epochs -> the full
+   70 together; none can be individually credited. The control is also one seed,
+   so it does not quantify the two switches' effect or their interaction.
 2. *"Better generator" is true only on the reconstruction axis.* Against v0.2.0
    this arm's best `val_recon` is 0.0177 vs 0.0494, a 2.8x improvement, but its
    best FID is 215.99 vs 216.87 - effectively unchanged. So the README's earlier
@@ -694,17 +703,15 @@ than dropped, and excluded from the monotonicity claim.
    not an acceptance criterion - but it does mean "FID got worse" and "FID did not
    move" are both defensible statements about the same two checkpoints, and any
    reuse of them has to say which comparison is meant.
-3. *Single seed.* Section 10 measures run-to-run spread of 0.034 pore F1 and 0.009
-   macro-F1 at fixed seed. The r=1.0 deltas clear that comfortably; the r=0.5 and
-   r=0.75 deltas (+0.041 and +0.015 pore F1) do not clear it decisively and should
-   not be quoted on their own.
+3. *The GroupNorm + balanced-sampler aggregate has three seeds, but the control
+   has one.* Seeds 43 and 44 retrained the generator and regenerated their pools,
+   so the GroupNorm values include generator as well as classifier variation. The
+   r=0.25 aggregate has only two valid scores. Section 10's fixed-seed classifier
+   repeatability warning remains relevant, and a three-seed control would still be
+   required to estimate a reliable control mean or an incremental switch effect.
 4. *The absolute numbers remain non-comparable to the papers'*, for the reasons in
    section 8: a from-scratch ResNet-18 over single images, not an LSTM/GRU over
    21-frame sequences.
-
-Seeds 43 and 44 are being run to replace caveat 3, each retraining the generator
-and regenerating the pool, because `verify_generation_meta` refuses to sweep a
-pool drawn from a different split.
 
 ### KL annealing: implemented, tested, deliberately not trained
 
