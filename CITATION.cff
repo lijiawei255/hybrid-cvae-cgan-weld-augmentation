@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use this code, please cite the original papers below. This repository is an unofficial re-implementation and is not affiliated with, endorsed by, or connected to the original authors or their institutions."
-title: "Unofficial re-implementation of a hybrid CVAE-CGAN for WAAM defect image augmentation"
+message: "If you use this code, please cite the original papers below. This repository is an unofficial, completed reference implementation and is not affiliated with, endorsed by, or connected to the original authors or their institutions. It is not actively developed."
+title: "Unofficial completed reference implementation of a hybrid CVAE-CGAN for WAAM defect image augmentation"
 type: software
 authors:
   - family-names: "lijiawei255"
@@ -155,6 +155,14 @@ references:
         given-names: "Zbigniew"
     year: 2016
     notes: "CVPR 2016. InceptionV3 provides the feature space for all FID computations here."
+  - type: software
+    title: "pytorch-fid: FID Score for PyTorch"
+    authors:
+      - family-names: "Seitzer"
+        given-names: "Maximilian"
+    year: 2020
+    url: "https://github.com/mseitzer/pytorch-fid"
+    notes: "Apache-2.0. Default FID backend from v0.4.0. This repo keeps class-balanced sampling and FFT matching around it. Published in-repo numbers used the older torchvision path (--fid_backend legacy)."
   - type: conference-paper
     title: "Deep Residual Learning for Image Recognition"
     authors:

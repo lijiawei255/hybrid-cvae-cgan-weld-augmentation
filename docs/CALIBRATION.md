@@ -5,9 +5,11 @@ reproduces** - which values were re-derived, which components were taken from th
 journal extension rather than the conference paper, and which of the papers'
 results cannot be reproduced here at all. It is optional reading: the defaults in
 `src/train_joint.py` are already the calibrated ones, and `README.md` is enough
-to run the pipeline. Read this if you want to check that the deviations are
-measured rather than arbitrary, or if you are porting the method to your own
-dataset and need to know which values to re-derive.
+to run the pipeline. Longer operating notes (journal-extension switches,
+own-data porting, limitations) live in [`USAGE.md`](USAGE.md). Read this if
+you want to check that the deviations are measured rather than arbitrary, or
+if you are porting the method to your own dataset and need to know which
+values to re-derive.
 
 `CHANGELOG.md` carries the short version. The raw run logs referenced below live
 in the git-ignored `runs/logs/` directory, so every measurement here is stated
@@ -34,6 +36,12 @@ images, never reconstructions.
 Absolute FID values are **not** comparable between this repo and the paper:
 different dataset, different resolution, different reference set. Only the
 direction of the curve is.
+
+From v0.4.0 the default computation is [pytorch-fid](https://github.com/mseitzer/pytorch-fid)
+(official TensorFlow Inception weights). Every FID number already published in
+this repository was computed with `--fid_backend legacy` (torchvision
+InceptionV3). Those two backends are not on the same scale; reproduce a
+published number with `legacy`, and do not mix them in one curve.
 
 ## 1. KL weight: paper's `beta = 30` -> `0.015`
 
