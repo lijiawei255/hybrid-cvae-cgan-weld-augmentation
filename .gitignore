@@ -230,3 +230,7 @@ REPRODUCTION_GUIDE.md
 *.ckpt
 # editor/agent tooling, never part of the published repo
 .qoder/
+.cursor/
+.mimosa/
+.zcode/
+AGENTS.md

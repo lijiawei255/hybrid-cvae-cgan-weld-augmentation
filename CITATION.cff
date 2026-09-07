@@ -3,7 +3,11 @@ message: "If you use this code, please cite the original papers below. This repo
 title: "Unofficial completed reference implementation of a hybrid CVAE-CGAN for WAAM defect image augmentation"
 type: software
 authors:
-  - family-names: "lijiawei255"
+  - family-names: "Li"
+    given-names: "Jiawei"
+version: 0.5.0
+date-released: "2026-09-07"
+repository-url: "https://github.com/lijiawei255/hybrid-cvae-cgan-weld-augmentation"
 license: MIT
 references:
   # ---------------------------------------------------------------------

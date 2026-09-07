@@ -34,7 +34,7 @@ from scipy.linalg import LinAlgWarning, sqrtm
 from torch.utils.data import DataLoader
 from torchvision.models import Inception_V3_Weights, inception_v3
 
-from data import ListDataset, build_loader
+from data import ListDataset, assert_channels_match_data, build_loader
 
 FID_BACKENDS = ("pytorch_fid", "legacy")
 DEFAULT_FID_BACKEND = "pytorch_fid"
@@ -105,21 +105,6 @@ class FeatureExtractor:
                 pred = F.adaptive_avg_pool2d(pred, (1, 1))
             feats.append(pred.flatten(1).cpu().numpy())
         return np.concatenate(feats)
-
-
-def _features(loader, device, model=None):
-    """Legacy helper kept for older call sites and smoke tests.
-
-    Prefer ``FeatureExtractor``. If ``model`` is omitted a torchvision
-    InceptionV3 is built, matching the pre-v0.4.0 behaviour.
-    """
-    if model is None:
-        return FeatureExtractor("legacy", device).features(loader)
-    feats = []
-    for batch in loader:
-        x = batch[0] if isinstance(batch, (tuple, list)) else batch
-        feats.append(model(inception_input(x.to(device))).cpu().numpy())
-    return np.concatenate(feats)
 
 
 def _stats(feats):
@@ -225,6 +210,8 @@ def main():
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    assert_channels_match_data(args.real_root, args.channels)
+    assert_channels_match_data(args.fake_root, args.channels)
     load_kw = dict(num_workers=args.num_workers, channels=args.channels,
                    fft_denoise=args.fft_denoise, fft_cutoff=args.fft_cutoff,
                    shuffle=False, drop_last=False)

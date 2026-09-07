@@ -9,6 +9,7 @@ data loading -> joint CVAE-CGAN training -> generation.
 
 It verifies code correctness only, NOT generation quality.
 """
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -323,17 +324,41 @@ def check_channels_refuse_colour():
     """--channels 1 on RGB files must raise rather than silently convert."""
     from data import assert_channels_match_data
 
-    tmp = Path(tempfile.mkdtemp(prefix="cvae_channels_"))
-    folder = tmp / "pore"
-    folder.mkdir(parents=True)
-    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(folder / "0.png")
-    try:
-        assert_channels_match_data(tmp, 1)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("RGB tree + --channels 1 must raise")
-    assert_channels_match_data(tmp, 3)
+    with tempfile.TemporaryDirectory(prefix="cvae_channels_") as td:
+        tmp = Path(td)
+        folder = tmp / "pore"
+        folder.mkdir(parents=True)
+        Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(folder / "0.png")
+        try:
+            assert_channels_match_data(tmp, 1)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("RGB tree + --channels 1 must raise")
+        assert_channels_match_data(tmp, 3)
+
+
+def check_generated_fft_parity():
+    """The in-training FID must filter generated images exactly like real ones.
+
+    With --fft_denoise the real reference passes through the dataset transform
+    (uint8 PIL -> FFTLowPass -> ToTensor). train_joint.py routes generated
+    tensors through ToPILImage -> FFTLowPass -> ToTensor; ToPILImage quantises
+    [0, 1] floats to uint8, the same quantisation save_image applies when
+    eval_fid.py reads generated images from disk. On uint8 input the two paths
+    must therefore agree exactly.
+    """
+    import torch
+    from data import FFTLowPass
+    from torchvision import transforms as T
+
+    rng = np.random.RandomState(0)
+    pil_img = Image.fromarray(rng.randint(0, 256, (32, 32, 3), dtype=np.uint8))
+    real_path = T.ToTensor()(FFTLowPass(0.25)(pil_img))
+    generated_side = T.Compose([T.ToPILImage(), FFTLowPass(0.25), T.ToTensor()])
+    gen_path = generated_side(T.ToTensor()(pil_img))
+    assert torch.allclose(real_path, gen_path, atol=1e-6), (
+        "generated-image FFT post-processing must match the dataset transform")
 
 
 def check_fid_input_preprocessing():
@@ -798,60 +823,66 @@ if __name__ == "__main__":
 
     check_balanced_fid_sampling()
     tmp = Path(tempfile.mkdtemp(prefix="cvae_cgan_smoke_"))  # OS-agnostic temp dir
-    check_class_distribution_figure(tmp)
-    check_distribution_protocol()
-    check_reconstruction_figure(tmp)
-    check_latent_projection_figure(tmp)
-    check_history_csv_reading(tmp)
-    check_sweep_csv_reading(tmp)
-    check_training_curves_figure(tmp)
-    check_filling_rate_curve_figure(tmp)
-    check_multi_seed_filling_rate_figure(tmp)
-    check_multi_seed_arm_exclusion()
-    check_comparison_grid_labels()
-    check_confusion_matrix_figure(tmp)
-    root = str(tmp / "smoke_data")
-    make_synthetic_weld_data(root, size=64)
+    try:
+        check_class_distribution_figure(tmp)
+        check_distribution_protocol()
+        check_reconstruction_figure(tmp)
+        check_latent_projection_figure(tmp)
+        check_history_csv_reading(tmp)
+        check_sweep_csv_reading(tmp)
+        check_training_curves_figure(tmp)
+        check_filling_rate_curve_figure(tmp)
+        check_multi_seed_filling_rate_figure(tmp)
+        check_multi_seed_arm_exclusion()
+        check_comparison_grid_labels()
+        check_confusion_matrix_figure(tmp)
+        root = str(tmp / "smoke_data")
+        make_synthetic_weld_data(root, size=64)
 
-    check_grayscale_dataset(tmp)
-    check_fft_denoise()
-    check_no_leakage_splits(tmp)
-    check_paper_decoder_and_loss()
-    check_hinge_losses_and_bounded_score()
-    check_discriminator_normalisation_choice()
-    check_kl_annealing_schedule()
-    check_class_balanced_sampling_weights()
-    check_feature_aggregation_fanin()
-    check_perceptual_loss()
-    check_fid_backend_names()
-    check_channels_refuse_colour()
-    check_fid_input_preprocessing()
-    check_fid_stats_numerics()
-    check_generate_counts_by_name()
-    check_filling_rate_protocol()
-    check_synthetic_prefix_nesting()
-    check_generated_class_manifest(tmp)
+        check_grayscale_dataset(tmp)
+        check_fft_denoise()
+        check_generated_fft_parity()
+        check_no_leakage_splits(tmp)
+        check_paper_decoder_and_loss()
+        check_hinge_losses_and_bounded_score()
+        check_discriminator_normalisation_choice()
+        check_kl_annealing_schedule()
+        check_class_balanced_sampling_weights()
+        check_feature_aggregation_fanin()
+        check_perceptual_loss()
+        check_fid_backend_names()
+        check_channels_refuse_colour()
+        check_fid_input_preprocessing()
+        check_fid_stats_numerics()
+        check_generate_counts_by_name()
+        check_filling_rate_protocol()
+        check_synthetic_prefix_nesting()
+        check_generated_class_manifest(tmp)
 
-    # Three epochs with --kl_warmup 1,1 so the run passes through both the
-    # zero-beta phase (epoch 1) and the ramp (epochs 2-3).
-    run(["--data_root", root, "--img_size", "64", "--latent_dim", "8", "--base_ch", "16",
-         "--epochs", "3", "--batch_size", "8", "--subset", "good=8,defect=4",
-         "--val_per_class", "4", "--fid_every", "1", "--sample_every", "2",
-         "--num_workers", "0", "--d_norm", "group", "--weighted_sampler",
-         "--kl_warmup", "1,1", "--monitor", "val_recon",
-         "--out_dir", str(tmp / "runs" / "joint")], "train_joint")
+        # Three epochs with --kl_warmup 1,1 so the run passes through both the
+        # zero-beta phase (epoch 1) and the ramp (epochs 2-3).
+        run(["--data_root", root, "--img_size", "64", "--latent_dim", "8", "--base_ch", "16",
+             "--epochs", "3", "--batch_size", "8", "--subset", "good=8,defect=4",
+             "--val_per_class", "4", "--fid_every", "1", "--sample_every", "2",
+             "--num_workers", "0", "--d_norm", "group", "--weighted_sampler",
+             "--kl_warmup", "1,1", "--monitor", "val_recon",
+             "--out_dir", str(tmp / "runs" / "joint")], "train_joint")
 
-    run(["--ckpt", str(tmp / "runs" / "joint" / "joint.pt"),
-         "--out_root", str(tmp / "smoke_gen"), "--counts", "good=4,defect=4"], "generate")
+        run(["--ckpt", str(tmp / "runs" / "joint" / "joint.pt"),
+             "--out_root", str(tmp / "smoke_gen"), "--counts", "good=4,defect=4"], "generate")
 
-    # Same --subset and seed as train_joint above, so the r=0.0 condition is
-    # exactly the real data the generator was trained on.
-    run(["--data_root", root, "--gen_root", str(tmp / "smoke_gen"),
-         "--subset", "good=8,defect=4", "--ratios", "0.0,1.0",
-         "--img_size", "64", "--channels", "3", "--epochs", "1", "--batch_size", "4",
-         "--num_workers", "0", "--out_dir", str(tmp / "runs" / "sweep")], "train_classifier")
+        # Same --subset and seed as train_joint above, so the r=0.0 condition is
+        # exactly the real data the generator trained on.
+        run(["--data_root", root, "--gen_root", str(tmp / "smoke_gen"),
+             "--subset", "good=8,defect=4", "--ratios", "0.0,1.0",
+             "--img_size", "64", "--channels", "3", "--epochs", "1", "--batch_size", "4",
+             "--num_workers", "0", "--out_dir", str(tmp / "runs" / "sweep")], "train_classifier")
 
-    sweep_dir = tmp / "runs" / "sweep"
-    for expected in ("results.txt", "sweep_metrics.csv", "cm_r0.npy", "cm_r1.npy"):
-        assert (sweep_dir / expected).is_file(), f"missing {expected}"
-    print("SMOKE TEST OK")
+        sweep_dir = tmp / "runs" / "sweep"
+        for expected in ("results.txt", "sweep_metrics.csv", "cm_r0.npy", "cm_r1.npy"):
+            assert (sweep_dir / expected).is_file(), f"missing {expected}"
+        print("SMOKE TEST OK")
+    except BaseException:
+        print(f"SMOKE TEST FAILED - keeping temp dir for inspection: {tmp}")
+        raise
+    shutil.rmtree(tmp, ignore_errors=True)

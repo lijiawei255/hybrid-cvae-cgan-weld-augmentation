@@ -673,7 +673,9 @@ switch's separate benefit.
 
 **The seed-42 r=0.25 score is invalid, not the whole ratio.** That classifier's
 loss sat at 0.0001 by epoch 90, then reported 0.2617 at epoch 100, and
-`train_classifier.py` scores the final epoch (section 10). Its spiked weights are
+`train_classifier.py` scores the final epoch (section 10; the default became
+`--selection best_val` in v0.4.0, and `--selection final` still reproduces this
+behaviour). Its spiked weights are
 excluded; the r=0.25 GroupNorm statistics therefore aggregate only seeds 43 and
 44 and are marked n=2.
 
@@ -779,7 +781,9 @@ python src/generate.py --ckpt runs/paper2_gn_wrs/joint.pt --seed 42 \
   --counts "deposit=450,discontinuity=300,pore=560,stain=0"
 
 # Its 5-ratio sweep. --ratios, --epochs 100, --img_size 224, --test_frac 0.2 and
-# --seed 42 are all defaults and are left implicit; --channels is not (default 1).
+# --seed 42 are all defaults and are left implicit; --channels 3 is written out
+# because it was not the default when this section was measured (it has been
+# since v0.4.0).
 python src/train_classifier.py --data_root data/lohi --gen_root generated_paper2 \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
   --channels 3 --out_dir runs/sweep_paper2_s42
@@ -867,6 +871,14 @@ python src/make_class_figures.py --real_root data/lohi \
 ```
 
 ## 10. The downstream classifier is not bit-reproducible, and it scores the final epoch
+
+> **Partly superseded by v0.4.0.** The second property no longer describes the
+> default: `train_classifier.py` now checkpoints and restores the
+> best-validation epoch (`--selection best_val`), so a late loss spike no
+> longer defines the reported numbers. `--selection final` keeps this
+> section's behaviour and reproduces the published tables, which were scored
+> that way. The bit-reproducibility analysis (Cause 1) is unaffected. Kept as
+> the record of how the published numbers were produced.
 
 Two properties of `train_classifier.py` bound how every filling-rate number in
 this repo - published or new - may be read. Both surfaced when the `r=0` control

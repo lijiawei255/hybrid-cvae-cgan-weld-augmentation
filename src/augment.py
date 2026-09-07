@@ -13,6 +13,8 @@ a dataset with different classes or a different class ordering.
 import json
 from pathlib import Path
 
+from data import parse_name_counts
+
 IMG_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
 #: Written by generate.py next to the class_i folders and checked by
@@ -106,7 +108,10 @@ def verify_generation_meta(gen_root, subset, seed, test_frac=None):
         return  # pools written before meta.json existed cannot be checked
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     problems = []
-    if meta.get("subset") is not None and meta["subset"] != subset:
+    # Subsets are compared as parsed mappings, so a reordered 'a=1,b=2' against
+    # a recorded 'b=2,a=1' is not a false alarm; a different mapping still refuses.
+    if (meta.get("subset") is not None
+            and parse_name_counts(meta["subset"]) != parse_name_counts(subset)):
         problems.append(f"--subset {subset!r} but pool was generated with "
                         f"{meta['subset']!r}")
     if meta.get("seed") is not None and meta["seed"] != seed:

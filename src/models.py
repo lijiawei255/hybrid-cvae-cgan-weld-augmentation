@@ -205,6 +205,10 @@ def hinge_g(fake_score):
 
 def reparameterize(mu, logvar):
     """Reparameterization trick: makes sampling differentiable so the VAE can be trained."""
+    # The clamp is a divergence guard, not part of the method: healthy training
+    # keeps logvar far inside +/-10, but an exploding run would otherwise turn
+    # exp(0.5*logvar) into inf and silently poison every later epoch.
+    logvar = logvar.clamp(-10.0, 10.0)
     std = torch.exp(0.5 * logvar)
     return mu + torch.randn_like(std) * std
 
@@ -223,6 +227,7 @@ def cvae_loss(x, x_recon, mu, logvar, kl_weight):
     passing 30 collapses the posterior to the prior and destroys reconstruction.
     """
     recon = nn.functional.mse_loss(x_recon, x, reduction="mean")
+    logvar = logvar.clamp(-10.0, 10.0)  # same divergence guard as reparameterize
     kl = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
     return recon + kl_weight * kl, recon, kl
 

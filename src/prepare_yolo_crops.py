@@ -64,7 +64,11 @@ def read_class_names(input_root, classes_arg):
 
 
 def find_label(image_path):
-    """The label file for an image: sibling with .yolo/.txt, else parallel labels/."""
+    """The label file for an image: sibling with .yolo/.txt, else parallel labels/.
+
+    Both common layouts are covered: flat labels/ beside images/, and the
+    split-subfolder form images/<split>/x.jpg -> labels/<split>/x.txt.
+    """
     for ext in LABEL_EXTENSIONS:
         sibling = image_path.with_suffix(ext)
         if sibling.is_file():
@@ -73,6 +77,10 @@ def find_label(image_path):
         parallel = image_path.parent.parent / "labels" / (image_path.stem + ext)
         if parallel.is_file():
             return parallel
+        split_dir = (image_path.parent.parent / "labels" / image_path.parent.name
+                     / (image_path.stem + ext))
+        if split_dir.is_file():
+            return split_dir
     return None
 
 
@@ -112,7 +120,7 @@ def main():
 
     out_root = Path(args.out_root)
     counts = {name: 0 for name in names}
-    no_label = skipped = written = 0
+    no_label = skipped = bad_lines = written = 0
     for image_path in iter_images(input_root):
         label_path = find_label(image_path)
         if label_path is None:
@@ -123,12 +131,22 @@ def main():
             lines = [ln.split() for ln in
                      label_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
             for k, parts in enumerate(lines):
-                class_id = int(parts[0])
+                if len(parts) < 5:
+                    bad_lines += 1
+                    print(f"warning: {label_path.name}:{k + 1} has {len(parts)} fields, "
+                          f"expected 'class xc yc w h'; skipped")
+                    continue
+                try:
+                    class_id = int(parts[0])
+                    xc, yc, w, h = (float(v) for v in parts[1:5])
+                except ValueError:
+                    bad_lines += 1
+                    print(f"warning: {label_path.name}:{k + 1} is not numeric; skipped")
+                    continue
                 if not 0 <= class_id < len(names):
                     raise SystemExit(
                         f"{label_path.name} references class_id {class_id}, outside "
                         f"0..{len(names) - 1} for names {names}")
-                xc, yc, w, h = (float(v) for v in parts[1:5])
                 bw, bh = w * width, h * height
                 if max(bw, bh) < args.min_side:
                     skipped += 1
@@ -138,6 +156,11 @@ def main():
                 half_h = bh * (1 + args.margin) / 2
                 box = (int(max(0, cx - half_w)), int(max(0, cy - half_h)),
                        int(min(width, cx + half_w)), int(min(height, cy + half_h)))
+                if box[0] >= box[2] or box[1] >= box[3]:
+                    bad_lines += 1
+                    print(f"warning: {label_path.name}:{k + 1} box {box} is empty after "
+                          f"clamping to the frame; skipped")
+                    continue
                 crop = handle.crop(box).convert("L" if args.channels == 1 else "RGB")
                 crop = crop.resize((args.img_size, args.img_size), Image.BILINEAR)
                 folder = out_root / names[class_id]
@@ -150,7 +173,8 @@ def main():
                 written += 1
 
     print(f"wrote {written} crops to {out_root} "
-          f"({no_label} images without labels, {skipped} boxes skipped)")
+          f"({no_label} images without labels, {skipped} boxes below --min_side, "
+          f"{bad_lines} malformed/inverted boxes skipped)")
     for name, count in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {name:<20} {count}")
     if counts:

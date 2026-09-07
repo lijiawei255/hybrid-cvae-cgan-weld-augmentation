@@ -9,6 +9,85 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
+## v0.5.0 - 2026-09-07
+
+Correction and hardening release. Published tables are unchanged; every
+recorded run passes its flags explicitly, so the behaviour changes below apply
+to future runs only.
+
+### Fixed
+
+- **In-training FID under `--fft_denoise` compared differently filtered
+  images.** `train_joint.py` built the real reference through the dataset's
+  FFT low-pass but fed raw sigmoid output on the generated side, so
+  `history.csv`'s fid column measured a preprocessing mismatch instead of
+  generation quality. Generated images now pass through the identical
+  PIL-domain filter (uint8 quantisation included), matching `eval_fid.py`,
+  which applies one load path to both trees. Pinned by a new smoke-test
+  check.
+- **`make_class_figures.py` had no `--fft_denoise`/`--fft_cutoff`**, so its
+  per-class FID strip silently compared unfiltered images against an
+  FFT-trained generator. It now takes both flags (defaults unchanged).
+- `ClassFolderDataset` no longer treats hidden directories (e.g.
+  `.ipynb_checkpoints`) as phantom classes that shift every label index;
+  `prepare_yolo_crops.py` already applied the same rule to its input tree.
+- `peek_image_mode` leaked an image file handle on Windows.
+- `prepare_yolo_crops.py`: `find_label` now also resolves the standard
+  split-subfolder layout (`images/<split>/x.jpg -> labels/<split>/x.txt`),
+  previously silently dropped as "no label"; malformed annotation lines and
+  boxes that invert when clamped to the frame are skipped with counted
+  warnings instead of crashing. An out-of-range `class_id` still aborts.
+- `make_paper_figures.py` cross-checks `--channels`/`--img_size` against the
+  checkpoint and fails with a targeted message instead of a tensor-shape
+  error further in.
+- Malformed table row in the v0.3.0 entry (discriminator lr had a leftover
+  fifth cell).
+- `docs/CALIBRATION.md` section 10 now carries a "Partly superseded by
+  v0.4.0" banner (`--selection best_val` is the default since v0.4.0;
+  `--selection final` still reproduces the published behaviour). Two stale
+  cross-references - the section 9 note and the `--channels` default remark -
+  are annotated the same way; measured numbers are untouched.
+
+### Changed
+
+- **`--val_per_class` default 500 -> 200** in `train_joint.py`. Every
+  documented command passes 200 explicitly; the old default could exceed a
+  small class's train-pool remainder and abort with a ValueError.
+- **`--channels 1` on colour files now raises everywhere** (`eval_fid.py`,
+  `make_paper_figures.py`, `make_class_figures.py`), matching what
+  `docs/USAGE.md` already stated, instead of silently converting to grayscale
+  in the evaluation scripts.
+- `--subset` agreement checks (`augment.py`, `make_paper_figures.py`) compare
+  parsed name-to-count mappings, so a reordered but identical subset no
+  longer reads as a split mismatch; a different mapping still refuses.
+- DCGAN init is documented as deliberately discriminator-only (comment at its
+  single call site); the encoder/decoder keep PyTorch default init, as in
+  every tagged run.
+- Removed the dead `_features` helper from `eval_fid.py`: it had no callers
+  and its "kept for smoke tests" comment was inaccurate.
+
+### Added
+
+- Divergence guards: `logvar` is clamped to +/-10 in `reparameterize` and
+  `cvae_loss` (unreachable in healthy training; stops one exploding step from
+  poisoning a run), and `train_joint.py` aborts with the epoch and step on a
+  non-finite loss instead of silently writing NaN history rows.
+- Smoke test: an FFT parity check (generated-side post-processing must equal
+  the dataset transform on uint8 input) and temp-dir cleanup on success
+  (kept for inspection on failure).
+- CI: pip and torch-weight caching, a 60-minute timeout, and cancellation of
+  superseded runs.
+- Documented the Python version (3.11, what CI runs) in both READMEs,
+  `docs/USAGE.md` and `requirements.txt`.
+- Both READMEs state the data trade-off explicitly: the papers' reported
+  numbers cannot be externally verified because their dataset is
+  proprietary, while every number in this repo is reproducible end-to-end
+  from public data.
+- `CITATION.cff` now carries `version`, `repository-url` and `date-released`,
+  and the author field matches the LICENSE spelling.
+- `.gitattributes` (`* text=auto`) and `.gitignore` coverage for editor/agent
+  tooling (`.cursor/`, `.mimosa/`, `AGENTS.md`).
+
 ## v0.4.1 - 2026-09-07
 
 Positioning and documentation pass. No training code, published tables, or
@@ -359,7 +438,7 @@ reproduction commands: [`docs/CALIBRATION.md`](docs/CALIBRATION.md).
 | Item | Paper | Here | Why |
 |---|---|---|---|
 | KL weight | `beta = 30` | `0.015` | `beta` is a ratio between the KL and reconstruction terms, so it is not scale-free. The paper's reported recon ~1000 and KL ~9.0 imply pixel-mean loss on a [0, 255] scale with KL summed over latent dims; converted to this repo's mean-normalised [0, 1] losses that is `30 * 32 / 65025 = 0.0148`. Measured: 0.006 leaves KL ~6x the paper's, 0.015 matches its order without collapse, >= 0.05 collapses the posterior. |
-| Discriminator lr | single `1e-3` for both nets | same 2e-4 | `1e-3` for both | **aligned with the conference paper**: hinge + spectral normalisation keep D in equilibrium on small data, so no reduction is needed; the 4e-4 value in docs/CALIBRATION.md was calibrated under the superseded BCE objective |
+| Discriminator lr | single `1e-3` for both nets | `1e-3` for both | **aligned with the conference paper**: hinge + spectral normalisation keep D in equilibrium on small data, so no reduction is needed; the 4e-4 value in docs/CALIBRATION.md was calibrated under the superseded BCE objective |
 | FFT denoising | in the preprocessing pipeline | implemented, off by default | RIAWELC radiographs put 99.98% of their spectral energy below r = 0.1 and essentially none above r = 0.3, so there is no high-frequency noise for the paper's circular low-pass to remove; at cutoff 0.25 it retains only ~4% of the mid-frequency structure that carries defect edges. Kept behind `--fft_denoise` for users with noisy visible-light data. |
 | Resolution | 400x400 | 224x224 | RIAWELC is natively 227x227. Reaching 400 needs upsampling, which invents detail while costing ~3x the compute (measured 12.4 h vs 3.8 h for 70 epochs on the full train pool). 224 loses 1.3% and divides by the architecture's x16 factor. |
 
