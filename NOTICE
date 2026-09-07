@@ -1,0 +1,13 @@
+This repository is MIT-licensed. It depends on the following Apache-2.0
+component, whose copyright and license notices are preserved here as required
+by that license.
+
+pytorch-fid
+Copyright (c) Maximilian Seitzer and contributors
+https://github.com/mseitzer/pytorch-fid
+Licensed under the Apache License, Version 2.0
+https://www.apache.org/licenses/LICENSE-2.0
+
+The default FID backend calls this library for Inception features and the
+Frechet-distance numerics. Class-balanced sampling, FFT-matching, and the
+weld folder protocol remain this repository's code.

@@ -22,6 +22,37 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 IMG_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
+_RGB_MODES = {"RGB", "RGBA", "YCbCr", "P"}
+
+
+def peek_image_mode(data_root):
+    """Mode of the first image under data_root, or None if the tree is empty."""
+    root = Path(data_root)
+    if not root.is_dir():
+        return None
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        for fp in sorted(folder.glob("*")):
+            if fp.suffix.lower() in IMG_EXTENSIONS:
+                return Image.open(fp).mode
+    return None
+
+
+def assert_channels_match_data(data_root, channels):
+    """Refuse --channels 1 on colour files, which would silently convert to L.
+
+    The papers' melt-pool camera was grayscale; LoHi-WELD is RGB. Converting
+    colour crops to one channel hides defect signal and is almost always a
+    leftover default rather than an intentional choice.
+    """
+    if channels != 1:
+        return
+    mode = peek_image_mode(data_root)
+    if mode in _RGB_MODES:
+        raise ValueError(
+            f"{data_root} looks like {mode} imagery; --channels 1 would silently "
+            f"convert it to grayscale. Pass --channels 3, or convert the files "
+            f"offline if grayscale really is intended.")
+
 
 
 def fft_lowpass(arr, cutoff=0.25):

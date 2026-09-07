@@ -9,6 +9,61 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
+## v0.4.1 - 2026-09-07
+
+Positioning and documentation pass. No training code, published tables, or
+defaults change.
+
+### Added
+
+- **`CONTRIBUTING.md`**: accept documentation typos and "cannot reproduce"
+  bugs; reject new methods, backbones, private data, and feature work. The
+  maintainer may merge nothing.
+- **`docs/USAGE.md`**: journal-extension switches, own-data porting,
+  repository layout, compute order of magnitude, and the full limitations
+  list (moved out of the READMEs).
+
+### Changed
+
+- Both READMEs are now a short entry: identity, maintenance status
+  (complete / as-is, not actively developed), Quickstart, LoHi-WELD prep,
+  current results and showcase figures, and BibTeX.
+- [`CITATION.cff`](CITATION.cff) title and message describe a completed
+  unofficial reference implementation.
+
+## v0.4.0 - 2026-09-07
+
+Credibility and evaluation-infrastructure release. Published tables are
+unchanged; new defaults apply to *future* runs.
+
+### Added
+
+- **Scope-at-a-glance** in both READMEs: paper method, this repo's
+  adaptations, data inequivalence, non-comparable results, and what is not
+  fully reproduced.
+- **`--fid_backend {pytorch_fid,legacy}`**. Default `pytorch_fid` wraps
+  [mseitzer/pytorch-fid](https://github.com/mseitzer/pytorch-fid)
+  (Apache-2.0; official TensorFlow Inception weights). `legacy` keeps the
+  torchvision path used by published in-repo numbers. The two scales differ.
+  Class-balanced sampling and FFT matching stay in this repo. Attribution:
+  `NOTICE`.
+- **`--selection {best_val,final}`** on `train_classifier.py`. Default
+  `best_val` restores the lowest-loss epoch on a real-only leftover
+  validation pool. `--selection final` reproduces the published tables.
+- **`--deterministic`** on `train_classifier.py` (CuDNN deterministic;
+  still not bit-identical on GPU).
+- **`assert_channels_match_data`**: `--channels 1` on colour files raises.
+- GitHub Actions workflow running `src/smoke_test.py`.
+
+### Changed
+
+- **`--channels` default is 3** in `train_joint.py` and
+  `train_classifier.py` (LoHi-WELD is RGB). Grayscale remains available as
+  `--channels 1`.
+- Quickstart now shows the recommended LoHi-WELD configuration.
+- Superseded v0.1.0 RIAWELC table removed from the READMEs; it stays here.
+- Paper-vs-code table below updated for LoHi-WELD as the primary experiment.
+
 ## v0.3.1 - 2026-09-07
 
 Documentation and evaluation-hygiene release. The pipeline and all published
@@ -498,16 +553,16 @@ reflects the state after the 2026-09-06 owner decisions.
 |---|---|---|---|---|
 | Framework | TensorFlow 2.18 / Keras 3.9 | same lineage | PyTorch | deliberate (guide's design) |
 | Training structure | single phase, combined loss, G and D alternated per minibatch | same lineage | single phase, combined loss, alternated per minibatch | **aligned** |
-| Image size | 400x400 grayscale | 400x400 grayscale | 224x224 grayscale | calibrated (native 227x227) |
+| Image size | 400x400 grayscale | 400x400 grayscale | 224x224; primary LoHi-WELD runs are RGB | calibrated (source boxes are much smaller; see CALIBRATION.md §4) |
 | Channels | 1 (grayscale melt-pool camera) | 1 | 1 or 3; primary runs at 3 | dataset-driven: colour carries defect signal in LoHi-WELD; the papers' grayscale is their sensor's property, not a method requirement |
 | Decoder output | sigmoid, [0, 1] | n/a | sigmoid, [0, 1] | **aligned** |
-| Preprocessing | ROI extraction, grayscale, FFT circular low-pass | same | grayscale; ROI already cropped by RIAWELC; FFT implemented, off | calibrated (measured band-limited) |
+| Preprocessing | ROI extraction, grayscale, FFT circular low-pass | same | LoHi-WELD ROI via prepare_yolo_crops.py; FFT implemented, off | calibrated (measured band-limited) |
 | Encoder body | 3x3 convs, residual connections, max pooling, 1x1 channel reduction | residual blocks, Group Normalization | 4 DCGAN-style 4x4 stride-2 convs + BatchNorm, then 1x1 reduction + global average pooling | partial: aggregation aligned, conv body deviation kept |
 | Discriminator head | global max pooling + dense + dropout | GAP -> 512-d + projection | global max pooling + single dense | partial: pooling aligned, dropout omitted |
 | Decoder upsampling | Sub-Pixel Convolution (2 stages) | progressive | 4 PixelShuffle stages | **aligned with the conference paper** |
-| Latent dim | 32 | 128 | 32 | **aligned with the conference paper** |
+| Latent dim | 32 | 128 | 32 default (conference); recommended LoHi-WELD uses 128 | both values are expressible |
 | Reconstruction loss | MSE | weighted (3.0) | MSE | **aligned** |
-| KL weight | beta = 30 | annealed 0 -> 0.5 | 0.015 | calibrated; equivalent under this repo's normalisation |
+| KL weight | beta = 30 | annealed 0 -> 0.5 | 0.015 at latent 32; 0.059 at latent 128 | calibrated; equivalent under this repo's normalisation |
 | Perceptual loss | VGG19, weight 0.1 | VGG19, weight 0.02 | frozen VGG19, weight 0.1 | **aligned** |
 | Adversarial weight | gamma = 1 | n/a | 0.1 | calibrated: at 1.0 under this repo's mean-normalised losses the adversarial term outweighs reconstruction ~20:1 and reconstruction never converges (docs/CALIBRATION.md) |
 | GAN objective | BCE minimax | hinge + projection discriminator + spectral norm | hinge + spectral norm | **aligned with the journal extension** (see below) |
@@ -518,8 +573,8 @@ reflects the state after the 2026-09-06 owner decisions.
 | Batch size | 8 | 16 | 8 | **aligned** |
 | Epochs | 70 | 200 | 70 | **aligned** |
 | Early stopping / LR schedule | patience 10; ReduceLROnPlateau factor 0.2 patience 5 | n/a | same | **aligned** |
-| FID | every epoch, vs real validation samples, InceptionV3 average pooling | same | every epoch, vs a real validation set, InceptionV3 pooled features | **aligned** |
+| FID | every epoch, vs real validation samples, InceptionV3 average pooling | same | every epoch, vs a real validation set; default backend pytorch-fid (TF Inception weights); `--fid_backend legacy` for published in-repo numbers | protocol aligned; feature weights are an evaluation-infrastructure choice |
 | Augmentation strategy | balance all classes to 600 | balance-to-max to N_max, filling-rate sensitivity sweep | balance-to-max to N_max, filling-rate sweep | **aligned** |
-| Training data | proprietary WAAM molten-pool, 1,898 images, 9 classes, 14.7x imbalance | own WA-DED data | RIAWELC subset, 1,140 images, 4 classes, 15x imbalance (public) | deliberate substitution (guide sec. 3) |
+| Training data | proprietary WAAM molten-pool, 1,898 images, 9 classes, 14.7x imbalance | own WA-DED data | LoHi-WELD (primary); RIAWELC historical only | deliberate public substitution |
 | Downstream classifier | LSTM and GRU over 21-frame sequences | GRU and LSTM over sequences | ResNet-18 from scratch over single images | forced deviation (no temporal axis); disclosed |
 | Generator sees test images | evaluation on "real, unseen images" | same | no - splits made first, generator restricted to the train pool | **aligned** |

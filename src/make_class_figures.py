@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from augment import generated_by_class
 from data import ClassFolderDataset, ListDataset, make_splits
-from eval_fid import _features, _stats, fid_from_stats
+from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
+                      _stats, frechet_distance)
 
 
 def load_row(files, per_row, img_size, seed):
@@ -46,6 +47,7 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--num_workers", type=int, default=4)
+    ap.add_argument("--fid_backend", choices=FID_BACKENDS, default=DEFAULT_FID_BACKEND)
     args = ap.parse_args()
 
     real_root, gen_root = Path(args.real_root), Path(args.gen_root)
@@ -53,6 +55,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    extractor = FeatureExtractor(args.fid_backend, device)
     ds = ClassFolderDataset(real_root, args.img_size, args.channels)
     s, g = args.img_size, 8
 
@@ -83,9 +86,9 @@ def main():
                                  drop_last=False, **dl_kw)
         gen_loader = DataLoader(ListDataset(gen_samples, ds.tf, ds.channels), shuffle=False,
                                 drop_last=False, **dl_kw)
-        mu_r, s_r = _stats(_features(real_loader, device))
-        mu_f, s_f = _stats(_features(gen_loader, device))
-        fid = fid_from_stats(mu_r, s_r, mu_f, s_f)
+        mu_r, s_r = _stats(extractor.features(real_loader))
+        mu_f, s_f = _stats(extractor.features(gen_loader))
+        fid = frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend)
 
         real_imgs = load_row([p for p in (real_root / cname).iterdir()
                               if p.suffix.lower() in (".png", ".jpg", ".jpeg")],

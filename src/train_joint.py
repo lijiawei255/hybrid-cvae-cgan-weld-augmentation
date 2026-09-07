@@ -48,14 +48,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
-from torchvision.models import Inception_V3_Weights, inception_v3
 from torchvision.utils import save_image
 
-from data import (ClassFolderDataset, balanced_sample_weights, count_by_class,
-                  make_splits, parse_name_counts, sample_named_subset)
-from eval_fid import _features, _stats, balanced_labels, fid_from_stats
+from data import (ClassFolderDataset, assert_channels_match_data,
+                  balanced_sample_weights, count_by_class, make_splits,
+                  parse_name_counts, sample_named_subset)
+from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
+                      _stats, balanced_labels, frechet_distance)
 from models import (Decoder, Discriminator, Encoder, PerceptualLoss, cvae_loss,
                     hinge_d, hinge_g, kl_schedule, reparameterize, weights_init)
 
@@ -76,14 +76,6 @@ def parse_kl_warmup(text):
     if ramp < 1:
         raise ValueError(f"--kl_warmup ramp must be at least 1 epoch, got {text!r}")
     return zero, ramp
-
-
-def build_inception(device):
-    """Shared InceptionV3 feature extractor for FID (built once, reused)."""
-    model = inception_v3(weights=Inception_V3_Weights.DEFAULT,
-                         transform_input=False).to(device)
-    model.fc = nn.Identity()
-    return model.eval()
 
 
 def save_sample_grid(enc, dec, x, y, latent_dim, path, nrow=8):
@@ -139,7 +131,9 @@ def main():
     ap.add_argument("--test_frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--img_size", type=int, default=224)
-    ap.add_argument("--channels", type=int, default=1)
+    ap.add_argument("--channels", type=int, default=3,
+                    help="3 for RGB (LoHi-WELD default); 1 for grayscale. "
+                         "Refuses --channels 1 on colour files.")
     ap.add_argument("--fft_denoise", action="store_true",
                     help="apply the paper's FFT circular low-pass denoising step")
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
@@ -207,6 +201,9 @@ def main():
                          "under --kl_warmup: the total includes beta*KL, so a rising ramp trips "
                          "the scheduler and early stopping on its own schedule rather than on "
                          "reconstruction quality.")
+    ap.add_argument("--fid_backend", choices=FID_BACKENDS, default=DEFAULT_FID_BACKEND,
+                    help="pytorch_fid (default) uses mseitzer/pytorch-fid; legacy "
+                         "reproduces published in-repo FID numbers. Scales differ.")
     ap.add_argument("--fid_every", type=int, default=1, help="paper computes FID every epoch")
     ap.add_argument("--sample_every", type=int, default=10)
     ap.add_argument("--num_workers", type=int, default=4)
@@ -216,6 +213,7 @@ def main():
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    assert_channels_match_data(args.data_root, args.channels)
     ds = ClassFolderDataset(args.data_root, args.img_size, args.channels,
                             args.fft_denoise, args.fft_cutoff)
     classes, num_classes = ds.classes, len(ds.classes)
@@ -233,7 +231,7 @@ def main():
 
     print(f"classes ({num_classes}): {classes}")
     print(f"device={device} img_size={args.img_size} channels={args.channels} "
-          f"fft_denoise={args.fft_denoise}")
+          f"fft_denoise={args.fft_denoise} fid_backend={args.fid_backend}")
     print(f"d_norm={args.d_norm} weighted_sampler={args.weighted_sampler} "
           f"kl_warmup={kl_zero},{kl_ramp} monitor={args.monitor}")
     print(f"held-out real test (never seen by generator or classifier training): "
@@ -271,8 +269,8 @@ def main():
         opt_d, factor=args.lr_factor, patience=args.lr_patience)
 
     # ---- fixed FID reference (real validation images, class-balanced) ---------
-    inception = build_inception(device)
-    mu_r, s_r = _stats(_features(val_loader, device, inception))
+    extractor = FeatureExtractor(args.fid_backend, device)
+    mu_r, s_r = _stats(extractor.features(val_loader))
     fid_labels = balanced_labels(num_classes, args.val_per_class, device)
 
     def compute_fid():
@@ -282,9 +280,9 @@ def main():
             for y in fid_labels.split(100):
                 z = torch.randn(y.size(0), args.latent_dim, device=device)
                 batches.append((dec(z, y).cpu(), None))
-        mu_f, s_f = _stats(_features(batches, device, inception))
+        mu_f, s_f = _stats(extractor.features(batches))
         dec.train()
-        return fid_from_stats(mu_r, s_r, mu_f, s_f)
+        return frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend)
 
     # Fixed class-balanced batch with each image's TRUE label, so sample grids are
     # comparable across epochs and each column is one class in all three rows.

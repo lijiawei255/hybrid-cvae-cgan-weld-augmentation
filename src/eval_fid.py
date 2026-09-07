@@ -2,22 +2,26 @@
 """FID evaluation: distributional distance between generated and real images
 (lower is better).
 
-Note: FID relies on InceptionV3 features and is noisy on small sample counts.
-Use at least ~2000 real and ~2000 generated images for meaningful absolute
-values; on smaller sets it should only be read as a training trend.
+Default backend is **pytorch-fid** (mseitzer/pytorch-fid, Apache-2.0): the
+community PyTorch port of the official TensorFlow Inception weights. That is
+an evaluation-infrastructure choice, not a change to the paper method. This
+module still owns the weld-specific protocol around that library:
 
-Two details that are easy to get wrong and are handled here:
+* class-balanced sampling over classes present in both trees, so a
+  balance-to-max pool that skips a majority class does not fold a class-ratio
+  difference into the score;
+* optional FFT denoising that must match how the generator was trained;
+* grayscale expansion to three replicated channels.
 
-* InceptionV3 with ``transform_input=False`` expects input in **[-1, 1]**. This
-  pipeline stores images in [0, 1], so the rescale happens in ``inception_input``
-  and nowhere else. Feeding [0, 1] directly silently shifts every activation
-  off-distribution and produces FID values that are not comparable to anything.
-* InceptionV3 is RGB-only, so ``inception_input`` expands single-channel
-  grayscale to three replicated channels before the forward pass.
-* By default both sides of the comparison are class-balanced over the classes
-  present in both trees. A generated pool that intentionally skips a class (a
-  balance-to-max pool contains no majority-class images) would otherwise skew
-  the score by a class-ratio difference instead of an image-quality one.
+``--fid_backend legacy`` keeps the older in-repo torchvision InceptionV3 path
+so published numbers in this repository remain reproducible. The two backends
+are **not** on the same scale; do not mix them, and do not compare either to
+the papers' FID.
+
+Two details that are easy to get wrong on the legacy path:
+
+* InceptionV3 with ``transform_input=False`` expects input in **[-1, 1]**.
+* InceptionV3 is RGB-only.
 """
 import argparse
 import random
@@ -32,13 +36,25 @@ from torchvision.models import Inception_V3_Weights, inception_v3
 
 from data import ListDataset, build_loader
 
+FID_BACKENDS = ("pytorch_fid", "legacy")
+DEFAULT_FID_BACKEND = "pytorch_fid"
+
+
+def parse_fid_backend(name):
+    """Accept only the two documented backends; unknown names raise."""
+    if name not in FID_BACKENDS:
+        raise ValueError(
+            f"fid backend must be one of {FID_BACKENDS}, got {name!r}")
+    return name
+
 
 def inception_input(x):
-    """Pipeline images ([0, 1], possibly grayscale) -> what InceptionV3 wants.
+    """Legacy path: pipeline images ([0, 1], possibly grayscale) -> torchvision Inception.
 
     Grayscale is replicated across three channels rather than zero-padded, and
     the range is rescaled to [-1, 1] because ``transform_input=False`` means the
-    model will not normalise for us.
+    model will not normalise for us. pytorch-fid does this rescale internally
+    and wants [0, 1] RGB instead.
     """
     if x.shape[1] == 1:
         x = x.expand(-1, 3, -1, -1)
@@ -47,16 +63,61 @@ def inception_input(x):
     return x * 2.0 - 1.0
 
 
-@torch.no_grad()
+def _as_rgb(x):
+    """[0, 1] NCHW, 1 or 3 channels -> 3-channel [0, 1] for pytorch-fid."""
+    if x.shape[1] == 1:
+        return x.expand(-1, 3, -1, -1)
+    return x
+
+
+class FeatureExtractor:
+    """Cached Inception feature extractor for one FID backend.
+
+    Built once per run and reused for the real reference and every generated
+    set, including the per-epoch training-loop measurement.
+    """
+
+    def __init__(self, backend, device):
+        self.backend = parse_fid_backend(backend)
+        self.device = device
+        if self.backend == "legacy":
+            model = inception_v3(weights=Inception_V3_Weights.DEFAULT,
+                                 transform_input=False).to(device)
+            model.fc = torch.nn.Identity()
+            self.model = model.eval()
+            return
+        from pytorch_fid.inception import InceptionV3
+        block = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
+        self.model = InceptionV3([block]).to(device).eval()
+
+    @torch.no_grad()
+    def features(self, loader):
+        """2048-d pooled Inception features for every image a loader yields."""
+        feats = []
+        for batch in loader:
+            x = batch[0] if isinstance(batch, (tuple, list)) else batch
+            x = x.to(self.device)
+            if self.backend == "legacy":
+                feats.append(self.model(inception_input(x)).cpu().numpy())
+                continue
+            pred = self.model(_as_rgb(x))[0]
+            if pred.dim() == 4:
+                pred = F.adaptive_avg_pool2d(pred, (1, 1))
+            feats.append(pred.flatten(1).cpu().numpy())
+        return np.concatenate(feats)
+
+
 def _features(loader, device, model=None):
-    """2048-d pooled InceptionV3 features for every image a loader yields."""
+    """Legacy helper kept for older call sites and smoke tests.
+
+    Prefer ``FeatureExtractor``. If ``model`` is omitted a torchvision
+    InceptionV3 is built, matching the pre-v0.4.0 behaviour.
+    """
     if model is None:
-        model = inception_v3(weights=Inception_V3_Weights.DEFAULT,
-                             transform_input=False).to(device)
-        model.fc = torch.nn.Identity()
-        model.eval()
+        return FeatureExtractor("legacy", device).features(loader)
     feats = []
-    for x, _ in loader:
+    for batch in loader:
+        x = batch[0] if isinstance(batch, (tuple, list)) else batch
         feats.append(model(inception_input(x.to(device))).cpu().numpy())
     return np.concatenate(feats)
 
@@ -66,7 +127,7 @@ def _stats(feats):
 
 
 def fid_from_stats(mu1, s1, mu2, s2, eps=1e-6):
-    """Frechet distance between two Gaussians N(mu, sigma).
+    """Frechet distance between two Gaussians N(mu, sigma). Used by --fid_backend legacy.
 
     A rank-deficient feature covariance is *expected* whenever there are fewer
     images than InceptionV3's 2048 feature dimensions, which is the normal case
@@ -97,6 +158,17 @@ def fid_from_stats(mu1, s1, mu2, s2, eps=1e-6):
     return max(value, 0.0)
 
 
+def frechet_distance(mu1, s1, mu2, s2, backend=DEFAULT_FID_BACKEND):
+    """Frechet distance using the selected backend's numerics."""
+    backend = parse_fid_backend(backend)
+    if backend == "legacy":
+        return fid_from_stats(mu1, s1, mu2, s2)
+    from pytorch_fid.fid_score import calculate_frechet_distance
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", LinAlgWarning)
+        return float(calculate_frechet_distance(mu1, s1, mu2, s2))
+
+
 def balanced_subset(ds, per_class, class_names, seed):
     """Class-balanced (path, label) subset of a dataset, restricted to class_names.
 
@@ -105,11 +177,10 @@ def balanced_subset(ds, per_class, class_names, seed):
     measuring image quality alone. Matching by class *name* (not integer
     label) keeps the two trees independent of each other's folder ordering.
     """
-    wanted = set(class_names)
     by_class = {name: [] for name in class_names}
     for sample in ds.samples:
         name = ds.classes[sample[1]]
-        if name in wanted:
+        if name in by_class:
             by_class[name].append(sample)
     rng = random.Random(seed)
     selected = []
@@ -145,6 +216,10 @@ def main():
     ap.add_argument("--balanced_per_class", type=int, default=0,
                     help="images per class on BOTH sides for the balanced comparison "
                          "(default: the smallest count over the shared classes)")
+    ap.add_argument("--fid_backend", choices=FID_BACKENDS, default=DEFAULT_FID_BACKEND,
+                    help="pytorch_fid (default): mseitzer/pytorch-fid with official "
+                         "TensorFlow Inception weights. legacy: the torchvision path "
+                         "used by published in-repo numbers. The two scales differ.")
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
@@ -185,14 +260,10 @@ def main():
         print(f"FID comparison: {n_per} per class x {len(shared)} shared classes on "
               f"both sides (class-balanced; pass --no_balance to compare both trees "
               f"as-is)")
-    # Build InceptionV3 once and share it across both sides.
-    model = inception_v3(weights=Inception_V3_Weights.DEFAULT,
-                         transform_input=False).to(device)
-    model.fc = torch.nn.Identity()
-    model.eval()
-    mu_r, s_r = _stats(_features(real_loader, device, model))
-    mu_f, s_f = _stats(_features(fake_loader, device, model))
-    print("FID =", fid_from_stats(mu_r, s_r, mu_f, s_f))
+    extractor = FeatureExtractor(args.fid_backend, device)
+    mu_r, s_r = _stats(extractor.features(real_loader))
+    mu_f, s_f = _stats(extractor.features(fake_loader))
+    print(f"FID ({args.fid_backend}) =", frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend))
 
 
 if __name__ == "__main__":

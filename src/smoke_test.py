@@ -305,6 +305,37 @@ def check_perceptual_loss():
     assert value.requires_grad, "must be differentiable wrt the generated image"
 
 
+def check_fid_backend_names():
+    """Only the two documented backends are accepted."""
+    from eval_fid import parse_fid_backend
+
+    assert parse_fid_backend("pytorch_fid") == "pytorch_fid"
+    assert parse_fid_backend("legacy") == "legacy"
+    try:
+        parse_fid_backend("clean_fid")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown FID backend must raise")
+
+
+def check_channels_refuse_colour():
+    """--channels 1 on RGB files must raise rather than silently convert."""
+    from data import assert_channels_match_data
+
+    tmp = Path(tempfile.mkdtemp(prefix="cvae_channels_"))
+    folder = tmp / "pore"
+    folder.mkdir(parents=True)
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(folder / "0.png")
+    try:
+        assert_channels_match_data(tmp, 1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("RGB tree + --channels 1 must raise")
+    assert_channels_match_data(tmp, 3)
+
+
 def check_fid_input_preprocessing():
     """InceptionV3 with transform_input=False wants [-1, 1] RGB at 299x299.
 
@@ -792,6 +823,8 @@ if __name__ == "__main__":
     check_class_balanced_sampling_weights()
     check_feature_aggregation_fanin()
     check_perceptual_loss()
+    check_fid_backend_names()
+    check_channels_refuse_colour()
     check_fid_input_preprocessing()
     check_fid_stats_numerics()
     check_generate_counts_by_name()
@@ -815,7 +848,7 @@ if __name__ == "__main__":
     # exactly the real data the generator was trained on.
     run(["--data_root", root, "--gen_root", str(tmp / "smoke_gen"),
          "--subset", "good=8,defect=4", "--ratios", "0.0,1.0",
-         "--img_size", "64", "--channels", "1", "--epochs", "1", "--batch_size", "4",
+         "--img_size", "64", "--channels", "3", "--epochs", "1", "--batch_size", "4",
          "--num_workers", "0", "--out_dir", str(tmp / "runs" / "sweep")], "train_classifier")
 
     sweep_dir = tmp / "runs" / "sweep"
