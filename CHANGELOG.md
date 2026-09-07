@@ -9,6 +9,38 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
+## Unreleased
+
+### Fixed
+
+- **Standalone FID class-prior mismatch in `src/eval_fid.py`.** The real side
+  was sampled class-balanced but the generated side was not, so the Quickstart
+  path compared a balanced real reference against a class-skewed fake tree (a
+  balance-to-max pool contains no majority-class images) and the score mixed a
+  class-ratio difference into the image-quality distance. Both sides are now
+  class-balanced over the classes present in both trees (default: the smallest
+  count over the shared classes); classes missing on one side are excluded
+  with a printed note, and `--no_balance` keeps the compare-as-is behaviour.
+  No published number changes: training-time FID already generated balanced
+  fake sets, and no reported result used the standalone path.
+
+### Changed
+
+- **`--kl_weight` help states the full conversion**
+  (`beta_eq = 30 * latent_dim / 65025`: 0.015 at latent dim 32, 0.059 at
+  latent dim 128, the recommended LoHi-WELD configuration) instead of only the
+  latent-32 instance, and labels the sweep's RIAWELC provenance.
+- **README (en/zh) discloses the 224px fidelity ceiling in the Data section**:
+  the median source box is ~47 px and 98.6% of crops are interpolation
+  upsamples - the canvas is 224, the information in it is not (measured in
+  `docs/CALIBRATION.md` section 4).
+- **Two positioning claims tightened (en/zh).** "faithful, from-scratch
+  re-implementation" is now "from-scratch re-implementation ... with every
+  deviation from the papers measured and documented", and the recommended
+  configuration is described as combining selected journal-extension
+  components, not as the journal paper's full configuration (its
+  physics-guided losses stay out of scope).
+
 ## v0.3.0 - 2026-09-07
 
 Documentation, multi-seed verification and audit release. The pipeline is

@@ -14,6 +14,10 @@ Two details that are easy to get wrong and are handled here:
   off-distribution and produces FID values that are not comparable to anything.
 * InceptionV3 is RGB-only, so ``inception_input`` expands single-channel
   grayscale to three replicated channels before the forward pass.
+* By default both sides of the comparison are class-balanced over the classes
+  present in both trees. A generated pool that intentionally skips a class (a
+  balance-to-max pool contains no majority-class images) would otherwise skew
+  the score by a class-ratio difference instead of an image-quality one.
 """
 import argparse
 import random
@@ -93,23 +97,28 @@ def fid_from_stats(mu1, s1, mu2, s2, eps=1e-6):
     return max(value, 0.0)
 
 
-def balanced_fid_samples(samples, num_classes, per_class, seed):
-    """Pick a class-balanced real FID reference set from (path, label) samples.
+def balanced_subset(ds, per_class, class_names, seed):
+    """Class-balanced (path, label) subset of a dataset, restricted to class_names.
 
-    Balancing matters: if the real reference keeps the dataset's natural class
-    proportions while the generated side is uniform, the measured FID absorbs
-    the class-ratio difference instead of measuring image quality alone.
+    Balancing matters: if one side of the comparison keeps classes the other
+    lacks, the measured FID absorbs the class-ratio difference instead of
+    measuring image quality alone. Matching by class *name* (not integer
+    label) keeps the two trees independent of each other's folder ordering.
     """
-    by_class = {label: [] for label in range(num_classes)}
-    for sample in samples:
-        by_class[sample[1]].append(sample)
+    wanted = set(class_names)
+    by_class = {name: [] for name in class_names}
+    for sample in ds.samples:
+        name = ds.classes[sample[1]]
+        if name in wanted:
+            by_class[name].append(sample)
     rng = random.Random(seed)
     selected = []
-    for label in range(num_classes):
-        if len(by_class[label]) < per_class:
+    for name in class_names:
+        if len(by_class[name]) < per_class:
             raise ValueError(
-                f"class {label} has fewer than {per_class} real FID samples")
-        selected.extend(rng.sample(by_class[label], per_class))
+                f"class '{name}' holds {len(by_class[name])} images, fewer than "
+                f"the {per_class} needed for a class-balanced FID comparison")
+        selected.extend(rng.sample(by_class[name], per_class))
     return selected
 
 
@@ -129,12 +138,13 @@ def main():
                          "preprocessing mismatch instead of generation quality")
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
     ap.add_argument("--no_balance", action="store_true",
-                    help="compare the natural imbalanced real tree as-is; by default the "
-                         "real side is sampled class-balanced so FID measures generation "
+                    help="compare both trees as-is with their natural class mixes; by "
+                         "default both sides are sampled class-balanced over the "
+                         "classes present in both trees, so FID measures generation "
                          "quality rather than the class-ratio difference")
     ap.add_argument("--balanced_per_class", type=int, default=0,
-                    help="images per class for the balanced real reference "
-                         "(default: the smallest class count)")
+                    help="images per class on BOTH sides for the balanced comparison "
+                         "(default: the smallest count over the shared classes)")
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
@@ -145,18 +155,36 @@ def main():
                    shuffle=False, drop_last=False)
     ds_real, real_loader = build_loader(args.real_root, args.img_size, args.batch_size,
                                         **load_kw)
-    _, fake_loader = build_loader(args.fake_root, args.img_size, args.batch_size, **load_kw)
+    ds_fake, fake_loader = build_loader(args.fake_root, args.img_size, args.batch_size, **load_kw)
     if not args.no_balance:
-        per_class_counts = {}
-        for _, label in ds_real.samples:
-            per_class_counts[label] = per_class_counts.get(label, 0) + 1
-        n_per = args.balanced_per_class or min(per_class_counts.values())
-        selected = balanced_fid_samples(ds_real.samples, len(ds_real.classes), n_per, seed=0)
-        real_loader = DataLoader(ListDataset(selected, ds_real.tf, ds_real.channels),
-                                 batch_size=args.batch_size, shuffle=False,
-                                 num_workers=args.num_workers)
-        print(f"real reference: {n_per} per class x {len(ds_real.classes)} classes "
-              f"(class-balanced; pass --no_balance for the natural tree)")
+        def counts_by_name(ds):
+            counts = {}
+            for _, label in ds.samples:
+                name = ds.classes[label]
+                counts[name] = counts.get(name, 0) + 1
+            return counts
+
+        real_counts, fake_counts = counts_by_name(ds_real), counts_by_name(ds_fake)
+        shared = sorted(set(real_counts) & set(fake_counts))
+        for name in sorted(set(real_counts) ^ set(fake_counts)):
+            print(f"note: class '{name}' is missing on one side "
+                  f"(real {real_counts.get(name, 0)}, fake {fake_counts.get(name, 0)} "
+                  f"images) - excluded from the balanced comparison")
+        if not shared:
+            raise SystemExit("no class is present in both trees; nothing to compare")
+        n_per = args.balanced_per_class or min(min(real_counts[n], fake_counts[n])
+                                               for n in shared)
+        real_loader = DataLoader(
+            ListDataset(balanced_subset(ds_real, n_per, shared, seed=0),
+                        ds_real.tf, ds_real.channels),
+            batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+        fake_loader = DataLoader(
+            ListDataset(balanced_subset(ds_fake, n_per, shared, seed=0),
+                        ds_fake.tf, ds_fake.channels),
+            batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+        print(f"FID comparison: {n_per} per class x {len(shared)} shared classes on "
+              f"both sides (class-balanced; pass --no_balance to compare both trees "
+              f"as-is)")
     # Build InceptionV3 once and share it across both sides.
     model = inception_v3(weights=Inception_V3_Weights.DEFAULT,
                          transform_input=False).to(device)

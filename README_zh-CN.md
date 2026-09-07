@@ -26,7 +26,7 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 
 ## 本仓库是什么、不是什么
 
-本仓库是对 Yang 等人所述 hybrid CVAE-CGAN 训练与增广协议的**忠实、从零开始的复现**，面向想要引用、验证或扩展该方法的研究者。
+本仓库是对 Yang 等人所述 hybrid CVAE-CGAN 训练与增广协议的**从零复现**，与论文的每一处偏离都经过测量并记录在 [`docs/CALIBRATION.md`](docs/CALIBRATION.md)，面向想要引用、验证或扩展该方法的研究者。
 
 它**不是**原作者的代码、通用图像生成库，或可用于无关数据集的即插即用工具。绝对数字与本文使用的替代数据集（LoHi-WELD，以及早期提交中的 RIAWELC）以及一个从零训练的 ResNet-18 分类器绑定，因此不可直接与论文的专有结果比较。
 
@@ -73,7 +73,8 @@ python src/make_paper_figures.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
   --out_dir results
 
-# 独立 FID：两棵图像目录之间
+# 独立 FID：两棵图像目录之间；两侧按共有类做类均衡
+# （balance-to-max 池会整个跳过一个类）。
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 ```
 
@@ -111,7 +112,7 @@ python src/train_joint.py \
   --out_dir runs/joint_lohi_recommended
 ```
 
-这是期刊扩展版的配置，它反转了本复现中 r=1.0 balance-to-max 的结论。如果你只能跑一个生成器设置，从这里开始；但仍需为你自己的数据扫描 `r`。
+这一配置组合的是期刊扩展版中的部分组件，而非其完整方法（physics-guided 损失仍在范围外，见下文"范围"一节）；它反转了本复现中 r=1.0 balance-to-max 的结论。如果你只能跑一个生成器设置，从这里开始；但仍需为你自己的数据扫描 `r`。
 
 ### 使用你自己的数据集
 
@@ -244,6 +245,8 @@ python src/prepare_yolo_crops.py \
 ```
 
 这会生成 8,012 个裁剪块：deposit 1,193、discontinuity 2,975、pore 304、stain 3,540（失衡比约 11.6×）。当前实验只使用该完整树的一个小而失衡的 `--subset`，而非全部 8,012 张。
+
+注意 224x224 画布高估了数据的真实分辨率：源标注框中位仅约 47px，98.6% 的框小于画布，因此几乎所有裁剪块都是插值上采样。这个保真度上限是 LoHi-WELD 数据来源本身的属性——完整尺寸分布的测量见 `docs/CALIBRATION.md` 第 4 节——与本仓库的任何配置无关。
 
 **RIAWELC**（X 光放射图）曾被 v0.1.0 与生成器标定记录使用，现在仅为历史脚注——当前没有任何数字源自它。其引用被保留，因为那些已公开的结果用过它。该数据集可在原作者仓库获取；制备时把带 split 前缀的类文件夹合并为 `LP`、`PO`、`CR`、`ND` 四个子文件夹即可。
 

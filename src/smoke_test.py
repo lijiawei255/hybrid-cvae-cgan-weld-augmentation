@@ -50,15 +50,31 @@ def run(cmd_args, module):
 
 def check_balanced_fid_sampling():
     import torch
-    from eval_fid import balanced_fid_samples, balanced_labels
+    from eval_fid import balanced_labels, balanced_subset
 
-    samples = [(Path(f"class_{label}_{i}.png"), label)
-               for label in range(3) for i in range(5)]
-    selected = balanced_fid_samples(samples, num_classes=3, per_class=2, seed=7)
-    assert selected == balanced_fid_samples(samples, num_classes=3, per_class=2, seed=7)
-    assert [label for _, label in selected].count(0) == 2
-    assert [label for _, label in selected].count(1) == 2
-    assert [label for _, label in selected].count(2) == 2
+    class _Ds:
+        def __init__(self, classes, counts):
+            self.classes = list(classes)
+            self.samples = [(Path(f"{name}_{i}.png"), label)
+                            for label, name in enumerate(classes)
+                            for i in range(counts[label])]
+
+    ds = _Ds(["pore", "deposit", "stain"], [5, 5, 5])
+    selected = balanced_subset(ds, 2, ["pore", "deposit", "stain"], seed=7)
+    assert selected == balanced_subset(ds, 2, ["pore", "deposit", "stain"], seed=7)
+    names = [ds.classes[label] for _, label in selected]
+    assert names.count("pore") == 2
+    assert names.count("deposit") == 2
+    assert names.count("stain") == 2
+    # Restricting to a subset of classes must drop the others, not dilute them.
+    restricted = balanced_subset(ds, 2, ["pore", "deposit"], seed=7)
+    assert {ds.classes[label] for _, label in restricted} == {"pore", "deposit"}
+    # Requesting more than a class holds raises instead of silently shrinking.
+    try:
+        balanced_subset(ds, 6, ["pore", "deposit", "stain"], seed=7)
+        raise AssertionError("balanced_subset accepted per_class above availability")
+    except ValueError:
+        pass
     assert torch.bincount(balanced_labels(3, 2, "cpu"), minlength=3).tolist() == [2, 2, 2]
 
 
