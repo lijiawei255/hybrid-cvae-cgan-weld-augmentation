@@ -13,7 +13,8 @@ Architecture and hyperparameter details that the conference paper omits are take
 
 > Junle Yang, Lei Yuan, Fengyang He, Zening Wu, Donghong Ding, Zengxi Pan, Huijun Li, *"Physics-guided generative data augmentation for vision-based signal processing under class-imbalanced conditions in directed energy deposition monitoring system"*, Mechanical Systems and Signal Processing, vol. 250, article 114138, 2026. **Open access (CC BY 4.0)**: DOI: [10.1016/j.ymssp.2026.114138](https://doi.org/10.1016/j.ymssp.2026.114138)
 
-If this repository is useful to you, please cite **those original papers** rather than this repo - they are the source of the method, and this re-implementation exists to point people toward them.
+If this repository is useful to you, please cite **those original papers** -
+they are the source of the method re-implemented here.
 
 This repo exists as a **public reference for anyone attempting a similar
 reproduction**: it documents what was re-implemented from the paper, which
@@ -204,7 +205,11 @@ dataset-specific:
 6. Retrain the classifier sweep with the same `--subset`, `--seed`, and
    `--test_frac` as the generator.
 
-## Results - v0.2.0 (LoHi-WELD, current)
+## Results - LoHi-WELD (current)
+
+This section keeps the published v0.2.0 single-seed table as released; the
+three-seed note below it (added in v0.3.0) is the current reading of the r=1.0
+result.
 
 Single seed (42). Generator: joint CVAE-CGAN on the paper-scale subset
 (pore 40 / deposit 150 / discontinuity 300 / stain 600), 70 epochs with early

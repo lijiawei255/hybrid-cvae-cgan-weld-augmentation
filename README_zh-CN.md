@@ -12,7 +12,7 @@
 
 > Junle Yang, Lei Yuan, Fengyang He, Zening Wu, Donghong Ding, Zengxi Pan, Huijun Li, *"Physics-guided generative data augmentation for vision-based signal processing under class-imbalanced conditions in directed energy deposition monitoring system"*, Mechanical Systems and Signal Processing, vol. 250, article 114138, 2026. **开放获取（CC BY 4.0）**：DOI: [10.1016/j.ymssp.2026.114138](https://doi.org/10.1016/j.ymssp.2026.114138)
 
-如果本仓库对你的工作有帮助，请引用**上述原始论文**而不是本仓库——它们是方法的来源，本复现的存在正是为了把读者引向它们。
+如果本仓库对你的工作有帮助，请引用**上述原始论文**——它们是本仓库所复现方法的来源。
 
 本仓库作为**公开参考**，面向任何想做类似复现的人：记录从论文复现了什么、使用了哪个公开替代数据集、以及实现与原文在哪些地方偏离。
 
@@ -133,7 +133,9 @@ python src/train_joint.py \
 5. 若启用 `--fft_denoise`，请同时传给 `train_joint.py` 和 `eval_fid.py`。
 6. 用与生成器相同的 `--subset`、`--seed` 和 `--test_frac` 重新训练分类器扫描。
 
-## 结果 - v0.2.0（LoHi-WELD，当前）
+## 结果 - LoHi-WELD（当前）
+
+本节按发布原样保留 v0.2.0 的单 seed 表格；表格后的三 seed 注记（v0.3.0 加入）是 r=1.0 结论的当前读法。
 
 单 seed（42）。生成器：在论文规模子集（pore 40 / deposit 150 / discontinuity 300 / stain 600）上联合训练 CVAE-CGAN，70 epoch 中于第 25 epoch 早停（最佳 epoch 15）。诊断：FID 从 371 降至 216 后在 ~200 平台（仅作诊断，不可与任何已发表 FID 比较）；重建 MSE 0.049–0.060，对照常数均值基线 0.062；样图网格显示清晰的类形态。
 
