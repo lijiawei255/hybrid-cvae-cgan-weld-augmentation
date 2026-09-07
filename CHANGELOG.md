@@ -9,7 +9,12 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
-## Unreleased
+## v0.3.1 - 2026-09-07
+
+Documentation and evaluation-hygiene release. The pipeline and all published
+numbers are unchanged; what ships is a standalone-FID measurement fix (no
+published number used that path), disclosure and wording tightening prompted
+by an external review, and README version-labelling sync.
 
 ### Fixed
 
@@ -40,6 +45,15 @@ them. This file keeps only the conclusions.
   configuration is described as combining selected journal-extension
   components, not as the journal paper's full configuration (its
   physics-guided losses stay out of scope).
+- **Top citation sentence neutralised (en/zh).** The intro no longer tells
+  readers what not to cite or frames the repo as existing to direct readers to
+  the papers; it asks users who found the repo useful to cite the original
+  papers as the source of the re-implemented method.
+- **Results section header no longer pinned to v0.2.0 (en/zh).** "Results -
+  v0.2.0 (LoHi-WELD, current)" became "Results - LoHi-WELD (current)", with an
+  opening line stating that the v0.2.0 single-seed table is kept as published
+  and the v0.3.0 three-seed note is the current reading. All other v0.2.0
+  mentions are figure/run provenance and stay as they are.
 
 ## v0.3.0 - 2026-09-07
 
