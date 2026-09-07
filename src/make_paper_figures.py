@@ -26,7 +26,8 @@ import numpy as np
 import torch
 
 from augment import filling_rate_counts
-from data import ClassFolderDataset, count_by_class, make_splits, parse_name_counts, sample_named_subset
+from data import (ClassFolderDataset, assert_channels_match_data, count_by_class,
+                  make_splits, parse_name_counts, sample_named_subset)
 from models import Decoder, Encoder, reparameterize
 
 
@@ -376,6 +377,7 @@ def main():
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    assert_channels_match_data(args.data_root, args.channels)
     ds = ClassFolderDataset(args.data_root, args.img_size, args.channels,
                             args.fft_denoise, args.fft_cutoff)
     classes = ds.classes
@@ -425,13 +427,30 @@ def main():
             f"checkpoint {args.ckpt} was trained on classes {ckpt_classes} but "
             f"{args.data_root} has {classes}; the figures would be labelled with "
             f"the wrong class names")
-    for flag, value in (("--subset", args.subset), ("--seed", args.seed),
-                        ("--test_frac", args.test_frac)):
+    for flag, value in (("--seed", args.seed), ("--test_frac", args.test_frac)):
         recorded = ckpt.get(flag.lstrip("-"))
         if recorded is not None and recorded != value:
             raise SystemExit(
                 f"{flag} {value!r} but checkpoint {args.ckpt} was trained with "
                 f"{recorded!r}; the figures would mix two different splits")
+    # Compare subsets as parsed mappings, so a reordered 'a=1,b=2' against a
+    # recorded 'b=2,a=1' is not a false alarm; a different mapping still refuses.
+    recorded_subset = ckpt.get("subset")
+    if (recorded_subset is not None
+            and parse_name_counts(recorded_subset) != parse_name_counts(args.subset)):
+        raise SystemExit(
+            f"--subset {args.subset!r} but checkpoint {args.ckpt} was trained with "
+            f"{recorded_subset!r}; the figures would mix two different splits")
+    if ckpt.get("img_channels") not in (None, args.channels):
+        raise SystemExit(
+            f"--channels {args.channels} but checkpoint {args.ckpt} was trained "
+            f"with img_channels={ckpt['img_channels']}; the loaded model would "
+            f"not match the data pipeline")
+    if ckpt.get("img_size") not in (None, args.img_size):
+        raise SystemExit(
+            f"--img_size {args.img_size} but checkpoint {args.ckpt} was trained "
+            f"with img_size={ckpt['img_size']}; the loaded model would not match "
+            f"the data pipeline")
     enc = Encoder(ckpt["img_channels"], ckpt["num_classes"], ckpt["latent_dim"],
                   ckpt["base_ch"], ckpt["img_size"]).to(device)
     dec = Decoder(ckpt["img_channels"], ckpt["num_classes"], ckpt["latent_dim"],

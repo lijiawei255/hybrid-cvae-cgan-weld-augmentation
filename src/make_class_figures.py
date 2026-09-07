@@ -20,7 +20,8 @@ from torch.utils.data import DataLoader, Subset
 sys.path.insert(0, str(Path(__file__).parent))
 
 from augment import generated_by_class
-from data import ClassFolderDataset, ListDataset, make_splits
+from data import (ClassFolderDataset, ListDataset, assert_channels_match_data,
+                  make_splits)
 from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
                       _stats, frechet_distance)
 
@@ -43,6 +44,10 @@ def main():
     ap.add_argument("--per_row", type=int, default=4)
     ap.add_argument("--img_size", type=int, default=160)
     ap.add_argument("--channels", type=int, default=3)
+    ap.add_argument("--fft_denoise", action="store_true",
+                    help="apply the same FFT low-pass the generator was trained with, "
+                         "so the per-class FID compares like with like (see eval_fid.py)")
+    ap.add_argument("--fft_cutoff", type=float, default=0.25)
     ap.add_argument("--test_frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--batch_size", type=int, default=32)
@@ -56,7 +61,9 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     extractor = FeatureExtractor(args.fid_backend, device)
-    ds = ClassFolderDataset(real_root, args.img_size, args.channels)
+    assert_channels_match_data(real_root, args.channels)
+    ds = ClassFolderDataset(real_root, args.img_size, args.channels,
+                            args.fft_denoise, args.fft_cutoff)
     s, g = args.img_size, 8
 
     try:
@@ -71,7 +78,9 @@ def main():
     test_set = set(test_idx)
 
     for i, cname in enumerate(ds.classes):
-        # FID reference excludes the held-out test split, matching train_joint.py.
+        # FID reference excludes the held-out test split. Unlike train_joint.py,
+        # which caps the reference at --val_per_class images, this uses every
+        # train-pool image of the class.
         real_idx = [j for j, (_, y) in enumerate(ds.samples)
                     if y == i and j not in test_set]
         gen_files = pool[cname]

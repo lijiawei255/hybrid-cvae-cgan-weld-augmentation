@@ -49,9 +49,10 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
+from torchvision import transforms
 from torchvision.utils import save_image
 
-from data import (ClassFolderDataset, assert_channels_match_data,
+from data import (ClassFolderDataset, FFTLowPass, assert_channels_match_data,
                   balanced_sample_weights, count_by_class, make_splits,
                   parse_name_counts, sample_named_subset)
 from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
@@ -126,8 +127,10 @@ def main():
     ap.add_argument("--out_dir", default="runs/joint")
     ap.add_argument("--subset", required=True,
                     help="generator training subset by class NAME, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'")
-    ap.add_argument("--val_per_class", type=int, default=500,
-                    help="real validation images per class; also the FID reference set")
+    ap.add_argument("--val_per_class", type=int, default=200,
+                    help="real validation images per class; also the FID reference set. "
+                         "Must fit inside the smallest class's train-pool remainder "
+                         "after --subset is drawn")
     ap.add_argument("--test_frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--img_size", type=int, default=224)
@@ -258,6 +261,9 @@ def main():
     dec = Decoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size).to(device)
     dis = Discriminator(args.channels, num_classes, args.base_ch, args.img_size,
                         norm=args.d_norm).to(device)
+    # DCGAN init is applied to the discriminator only; the encoder and decoder
+    # keep PyTorch's default init. Every tagged run used this asymmetry, so it
+    # is kept for reproducibility rather than extended to the generator.
     dis.apply(weights_init)
     perc = PerceptualLoss(args.channels).to(device)
 
@@ -273,13 +279,27 @@ def main():
     mu_r, s_r = _stats(extractor.features(val_loader))
     fid_labels = balanced_labels(num_classes, args.val_per_class, device)
 
+    # With --fft_denoise the real reference above goes through the dataset's
+    # FFT low-pass on uint8-quantised pixels. Route generated images through
+    # the identical PIL-domain filter so the in-training FID measures
+    # generation quality rather than a preprocessing mismatch; this matches
+    # eval_fid.py, which applies one load path to both trees.
+    gen_post = None
+    if args.fft_denoise:
+        gen_post = transforms.Compose([transforms.ToPILImage(),
+                                       FFTLowPass(args.fft_cutoff),
+                                       transforms.ToTensor()])
+
     def compute_fid():
         dec.eval()
         batches = []
         with torch.no_grad():
             for y in fid_labels.split(100):
                 z = torch.randn(y.size(0), args.latent_dim, device=device)
-                batches.append((dec(z, y).cpu(), None))
+                gen = dec(z, y).cpu()
+                if gen_post is not None:
+                    gen = torch.stack([gen_post(img) for img in gen])
+                batches.append((gen, None))
         mu_f, s_f = _stats(extractor.features(batches))
         dec.train()
         return frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend)
@@ -327,6 +347,13 @@ def main():
             # ---- discriminator side: separate backward pass, same minibatch ---
             fake_d = dec(torch.randn(b, args.latent_dim, device=device), y).detach()
             loss_d = hinge_d(dis(x, y), dis(fake_d, y))
+            if not (torch.isfinite(loss_g) and torch.isfinite(loss_d)):
+                # Stop before backward() plants NaN gradients in the weights;
+                # otherwise the rest of the run silently writes nan history rows.
+                raise SystemExit(
+                    f"non-finite loss at epoch {epoch} step {steps + 1} "
+                    f"(loss_g={loss_g.item():.4g}, loss_d={loss_d.item():.4g}); "
+                    f"training diverged")
             opt_d.zero_grad(); loss_d.backward(); opt_d.step()
 
             agg["recon"] += l_recon.item(); agg["kl"] += l_kl.item()

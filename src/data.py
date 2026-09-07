@@ -33,7 +33,8 @@ def peek_image_mode(data_root):
     for folder in sorted(p for p in root.iterdir() if p.is_dir()):
         for fp in sorted(folder.glob("*")):
             if fp.suffix.lower() in IMG_EXTENSIONS:
-                return Image.open(fp).mode
+                with Image.open(fp) as img:
+                    return img.mode
     return None
 
 
@@ -73,7 +74,7 @@ def fft_lowpass(arr, cutoff=0.25):
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-class _FFTLowPass:
+class FFTLowPass:
     """PIL-to-PIL wrapper so FFT denoising composes with torchvision transforms."""
 
     def __init__(self, cutoff=0.25):
@@ -105,7 +106,11 @@ class ClassFolderDataset(Dataset):
     def __init__(self, data_root, img_size=224, channels=1, fft_denoise=False, fft_cutoff=0.25):
         self.root = Path(data_root)
         self.channels = channels
-        self.classes = sorted(p.name for p in self.root.iterdir() if p.is_dir())
+        # Hidden dirs are skipped: a .ipynb_checkpoints or editor leftover must
+        # not become a phantom class that shifts every label index (prepare_yolo_
+        # crops.py applies the same rule to its input tree).
+        self.classes = sorted(p.name for p in self.root.iterdir()
+                              if p.is_dir() and not p.name.startswith("."))
         self.samples = []
         for idx, cname in enumerate(self.classes):
             for fp in sorted((self.root / cname).glob("*")):
@@ -114,7 +119,7 @@ class ClassFolderDataset(Dataset):
 
         steps = [transforms.Resize((img_size, img_size))]
         if fft_denoise:
-            steps.append(_FFTLowPass(fft_cutoff))
+            steps.append(FFTLowPass(fft_cutoff))
         steps.append(transforms.ToTensor())  # -> [0, 1]; no rescaling to [-1, 1]
         self.tf = transforms.Compose(steps)
 

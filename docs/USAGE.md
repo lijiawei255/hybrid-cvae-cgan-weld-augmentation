@@ -6,6 +6,10 @@ repository layout, and the full limitations list. Calibration measurements
 stay in [CALIBRATION.md](CALIBRATION.md). Contribution rules:
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+Environment: Python 3.11 is the tested version (the one CI runs); other
+versions are untested. First run downloads the VGG19 and InceptionV3 weights
+(~640 MB total) and needs internet.
+
 ## Compute (order of magnitude)
 
 On an RTX 4000 Ada Laptop (12 GB), a 70-epoch joint run on the paper-scale

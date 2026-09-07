@@ -67,7 +67,10 @@ the older torchvision path (`--fid_backend legacy`).
 **Data inequivalence.** The papers train on proprietary visible-light
 melt-pool images (1,898 images, 9 classes). This repo uses public LoHi-WELD
 weld-bead crops and a simulated small/imbalanced `--subset`. Modality
-matches; defect semantics, camera geometry and scale do not.
+matches; defect semantics, camera geometry and scale do not. The papers'
+reported numbers cannot be externally verified because their dataset is
+proprietary; every number in this repo is reproducible end-to-end from
+public data.
 
 **Not comparable to the papers.** Accuracy, F1, FID absolute values, and
 DR/MDR. LoHi-WELD has no non-defect class, so DR/MDR are undefined here.
@@ -91,6 +94,9 @@ is on the order of **one hour**. The five-ratio classifier sweep is typically
 a few hours. The smoke test is minutes. See
 [`docs/USAGE.md`](docs/USAGE.md#compute-order-of-magnitude) and the timing
 table in [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 4.
+
+Python 3.11 is the tested version (the one CI runs); other versions are
+untested.
 
 ```bash
 pip install -r requirements.txt

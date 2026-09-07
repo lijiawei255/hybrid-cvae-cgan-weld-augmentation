@@ -36,7 +36,7 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 
 **本仓库适配。** PyTorch 而非 TensorFlow/Keras。KL 权重按本仓库均值归一化的 [0, 1] 损失换算（latent 32 时 `0.015`，latent 128 时 `0.059`，对应论文 `beta = 30`）。对抗项是 hinge + spectral normalisation（期刊扩展），不是会议论文的 BCE。编码器卷积体是 4x4 stride-2 DCGAN 块，不是论文的 3x3 残差。下游分类器是单帧上从零训练的 ResNet-18。默认 FID 使用 [pytorch-fid](https://github.com/mseitzer/pytorch-fid)（官方 TensorFlow Inception 权重）。本仓库已发表的 FID 数字用的是旧的 torchvision 路径（`--fid_backend legacy`）。
 
-**数据不等价。** 论文训练于专有可见光熔池图像（1,898 张、9 类）。本仓库使用公开 LoHi-WELD 焊缝裁剪，外加模拟的小而失衡 `--subset`。模态匹配；缺陷语义、相机几何与尺度不匹配。
+**数据不等价。** 论文训练于专有可见光熔池图像（1,898 张、9 类）。本仓库使用公开 LoHi-WELD 焊缝裁剪，外加模拟的小而失衡 `--subset`。模态匹配；缺陷语义、相机几何与尺度不匹配。论文报告的数字因数据专有而无法被外部验证；本仓库的每一个数字都可基于公开数据端到端复现。
 
 **不可与论文直接比较。** 准确率、F1、FID 绝对值、DR/MDR。LoHi-WELD 没有非缺陷类，因此 DR/MDR 在此不可定义。
 
@@ -53,6 +53,8 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 ## 快速开始
 
 在 12 GB GPU 上，论文规模子集上推荐的 70-epoch 生成器大约需要**一小时**。五比例分类器扫描通常要几小时。冒烟测试只需几分钟。见 [`docs/USAGE.md`](docs/USAGE.md#compute-order-of-magnitude) 与 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 4 节计时表。
+
+测试通过的 Python 版本为 3.11（CI 所用版本）；其他版本未测试。
 
 ```bash
 pip install -r requirements.txt
