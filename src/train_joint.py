@@ -157,12 +157,16 @@ def main():
                          "reconstruction.")
     ap.add_argument("--kl_weight", type=float, default=0.015,
                     help="KL weight equivalent to the paper's beta=30 under this repo's "
-                         "mean-normalised [0,1] losses. The paper reports recon converging to "
-                         "~1000 and KL stabilising near 9.0, which is consistent with recon as a "
-                         "mean over pixels on a [0,255] scale and KL summed over its 32 latent "
-                         "dims; converting both gives 30*32/65025 = 0.0148. Measured on RIAWELC: "
+                         "mean-normalised [0,1] losses: beta_eq = 30 * latent_dim / 65025, "
+                         "so 0.015 at the default --latent_dim 32 and 0.059 at "
+                         "--latent_dim 128 (the recommended LoHi-WELD configuration; "
+                         "docs/CALIBRATION.md sections 1 and 9). The paper reports recon "
+                         "converging to ~1000 and KL stabilising near 9.0, consistent with "
+                         "recon as a mean over pixels on a [0,255] scale and KL summed over "
+                         "its 32 latent dims. Sweep measured on RIAWELC at latent_dim 32: "
                          "0.006 leaves KL ~6x the paper's, 0.015 matches its order without "
-                         "collapse, >=0.05 collapses the posterior and degrades reconstruction.")
+                         "collapse, >=0.05 collapses the posterior and degrades "
+                         "reconstruction.")
     ap.add_argument("--perc_weight", type=float, default=0.1, help="paper's lambda")
     ap.add_argument("--adv_weight", type=float, default=0.1,
                     help="adversarial weight (paper's gamma is 1.0). At 1.0 the bounded hinge "

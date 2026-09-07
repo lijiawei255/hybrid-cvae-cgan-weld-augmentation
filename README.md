@@ -38,10 +38,11 @@ blurry.
 
 ## What this repository is and is not
 
-This repository is a **faithful, from-scratch re-implementation** of the hybrid
-CVAE-CGAN training and augmentation protocol described by Yang et al. It is
-intended as a reference for researchers who want to cite, validate, or extend
-the method.
+This repository is a **from-scratch re-implementation of the hybrid CVAE-CGAN
+training and augmentation protocol** described by Yang et al., with every
+deviation from the papers measured and documented in
+[`docs/CALIBRATION.md`](docs/CALIBRATION.md). It is intended as a reference
+for researchers who want to cite, validate, or extend the method.
 
 It is **not** the original authors' code, a general-purpose image-generation
 library, or a drop-in tool for unrelated datasets. The absolute numbers are tied
@@ -93,7 +94,8 @@ python src/make_paper_figures.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
   --out_dir results
 
-# Standalone FID between two image trees.
+# Standalone FID between two image trees; both sides are class-balanced over
+# the classes present in both trees (a balance-to-max pool skips a class).
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 ```
 
@@ -154,9 +156,11 @@ python src/train_joint.py \
   --out_dir runs/joint_lohi_recommended
 ```
 
-This is the journal-extension configuration that reversed the r=1.0
-balance-to-max finding in this re-implementation. If you only have time for one
-generator setting, start here; still sweep `r` for your own data.
+This configuration combines selected components from the journal extension,
+not its full method (the physics-guided losses stay out of scope; see Scope
+below), and it reversed the r=1.0 balance-to-max finding in this
+re-implementation. If you only have time for one generator setting, start
+here; still sweep `r` for your own data.
 
 ### Using your own dataset
 
@@ -390,6 +394,12 @@ python src/prepare_yolo_crops.py \
 This produces 8,012 crops: deposit 1,193, discontinuity 2,975, pore 304,
 stain 3,540 (imbalance ratio ~11.6x). The current experiments use a small,
 imbalanced `--subset` of this full tree rather than all 8,012 images.
+
+The 224x224 canvas overstates the data's true resolution: the median source box
+is ~47 px and 98.6% of boxes are smaller than the canvas, so almost every crop
+is an interpolation upsample. That fidelity ceiling is a property of LoHi-WELD's
+provenance - measured, with the full size distribution, in
+`docs/CALIBRATION.md` section 4 - not of anything in this repo's configuration.
 
 **RIAWELC** (X-ray radiographs) was used by v0.1.0 and by the generator
 calibration record, and is now a historical footnote only - no current number
