@@ -9,6 +9,18 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
+## Unreleased
+
+Documentation-only presentation pass; nothing was retrained and no code,
+defaults, or published numbers change.
+
+### Added
+
+- README (English and Chinese): a shields badge row (license, CI, Python,
+  PyTorch, both paper DOIs, Zenodo DOI, maintenance status), a Quick facts
+  summary table, a table of contents, and a Zenodo archive link in the
+  citation section.
+
 ## v0.5.1 - 2026-09-08
 
 Interface fixes and disclosure pass prompted by an external audit and a

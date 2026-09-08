@@ -2,6 +2,15 @@
 
 **语言 / Language:** [English](README.md) | 中文
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/lijiawei255/hybrid-cvae-cgan-weld-augmentation/actions/workflows/smoke.yml/badge.svg)](https://github.com/lijiawei255/hybrid-cvae-cgan-weld-augmentation/actions/workflows/smoke.yml)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg)](https://www.python.org/)
+[![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C.svg)](https://pytorch.org/)
+[![Conference paper DOI](https://img.shields.io/badge/DOI-10.1109%2FCYBER67662.2025.11168313-007EC7.svg)](https://doi.org/10.1109/CYBER67662.2025.11168313)
+[![Journal extension DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.ymssp.2026.114138-007EC7.svg)](https://doi.org/10.1016/j.ymssp.2026.114138)
+[![Zenodo DOI](https://img.shields.io/badge/Zenodo-10.5281%2Fzenodo.22660143-0067A8.svg)](https://doi.org/10.5281/zenodo.22660143)
+[![Status: complete / as-is](https://img.shields.io/badge/status-complete_/_as--is-lightgrey.svg)](CHANGELOG.md)
+
 > **同步声明**：英文版 `README.md` 为规范版本（normative）。本中文版与其保持同步更新；若两者出现不一致，以英文版为准。
 
 **维护状态：已完成 / 按现状提供。** 本仓库是一份已完成的参考实现，不再主动开发。Issue 可能无人回复；需要新功能请 [fork](CONTRIBUTING.md)，不要等待。已发布协议中的致命缺陷仍可能被修复。
@@ -21,6 +30,28 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 ```
 
 更长的操作说明（期刊扩展开关、自有数据迁移、仓库结构、完整局限）见 [`docs/USAGE.md`](docs/USAGE.md)。与论文的实测偏离见 [`docs/CALIBRATION.md`](docs/CALIBRATION.md)。
+
+## 快速事实
+
+| | |
+|---|---|
+| **任务** | 面向小而失衡的焊缝缺陷图像数据集的类条件增广 |
+| **方法** | 单个联合训练的 hybrid CVAE-CGAN：同一解码器同时是 `D(z, y)` 与 `G(z, y)`；MSE + KL + VGG19 感知 + hinge 对抗（spectral norm） |
+| **数据** | 公开 LoHi-WELD 焊缝裁剪（论文使用专有 WAAM 熔池图像；结果不可比较） |
+| **入口脚本** | `smoke_test.py` -> `train_joint.py` -> `generate.py` -> `train_classifier.py`（+ `eval_fid.py`），均在 `src/` |
+| **主要结果** | balance-to-max（r=1.0）三 seed macro-F1 0.7185 ± 0.0019，较纯真实均值 +0.0399（见[结果](#结果---lohi-weld当前)） |
+| **状态** | 已完成 / 按现状提供；冻结参考实现，v0.5.1（[CHANGELOG](CHANGELOG.md)） |
+
+## 目录
+
+- [本仓库是什么、不是什么](#本仓库是什么不是什么)
+- [范围一览](#范围一览)
+- [免责声明](#免责声明)
+- [快速开始](#快速开始)
+- [数据](#数据)
+- [结果 - LoHi-WELD（当前）](#结果---lohi-weld当前)
+- [许可证](#许可证)
+- [引用方式](#引用方式)
 
 ## 本仓库是什么、不是什么
 
@@ -175,7 +206,7 @@ python src/prepare_yolo_crops.py \
 
 ## 引用方式
 
-如果本复现对你的工作有帮助，请引用**原始论文**与**数据集**而不是本仓库。[`CITATION.cff`](CITATION.cff) 列两组：被复现论文加每个数据集的强制引用，以及实现组件引用（FID、t-SNE、InceptionV3、ResNet-18、VGG19）。
+如果本复现对你的工作有帮助，请引用**原始论文**与**数据集**而不是本仓库。[`CITATION.cff`](CITATION.cff) 列两组：被复现论文加每个数据集的强制引用，以及实现组件引用（FID、t-SNE、InceptionV3、ResNet-18、VGG19）。本仓库的各版本快照存档于 Zenodo：[10.5281/zenodo.22660143](https://doi.org/10.5281/zenodo.22660143)。
 
 ```bibtex
 % --- 主方法参考（被复现的会议论文）---
