@@ -2,7 +2,7 @@
 """Smoke test: unit checks plus an end-to-end run on synthetic weld-like images.
 
 The unit checks pin down the contracts that are easy to break silently - the
-[0, 1] pixel range with selectable 1- or 3-channel input, the leakage-free
+[0, 1] pixel range with selectable 1- or 3-channel input, the crop-level
 splits, this repo's calibrated loss weights, the FID input normalisation and
 numerics, and name-keyed class configuration. The end-to-end part then runs
 data loading -> joint CVAE-CGAN training -> generation.
@@ -217,11 +217,13 @@ def check_fft_denoise():
 
 
 def check_no_leakage_splits(tmp):
-    """The generator must never see the classifier's held-out test images.
+    """Crop indices must never cross the train/test pools.
 
-    Subset selection is keyed by class NAME, not index, so a dataset with a
-    different class order or count behaves correctly instead of silently
-    sampling the wrong classes.
+    The generator never sees the classifier's held-out test crops. Subset
+    selection is keyed by class NAME, not index, so a dataset with a different
+    class order or count behaves correctly instead of silently sampling the
+    wrong classes. (The split is crop-level, not source-isolated - see
+    data.make_splits.)
     """
     from data import ClassFolderDataset, make_splits, sample_named_subset
 
@@ -601,11 +603,13 @@ def check_multi_seed_filling_rate_figure(tmp):
 
 
 def check_multi_seed_arm_exclusion():
-    """Excluding one invalid arm must drop that arm only, and never silently.
+    """Excluding one arm must drop that arm only, and never silently.
 
-    The seed-42 r=0.25 score in the section 9 sweep is invalid (final-epoch loss
-    spike), so the figure has to drop one (file, ratio) pair while keeping the
-    same ratio from the other seeds. Dropping it everywhere, or silently ignoring
+    The seed-42 r=0.25 score in the section 9 sweep was excluded from the
+    aggregate after a final-epoch loss spike - a post-hoc exclusion recorded
+    as such in docs/CALIBRATION.md, not a pre-registered validity criterion -
+    so the figure has to drop one (file, ratio) pair while keeping the same
+    ratio from the other seeds. Dropping it everywhere, or silently ignoring
     a mistyped path or ratio, would reshape the curve with no warning.
     """
     from make_multiseed_figure import drop_arms
@@ -656,6 +660,7 @@ def check_generated_class_manifest(tmp):
     differently ordered dataset would silently assign every synthetic image to
     the wrong class - corrupting the filling-rate result with no error anywhere.
     """
+
     from augment import generated_by_class
 
     root = tmp / "gen_pool"
@@ -683,6 +688,113 @@ def check_generated_class_manifest(tmp):
     pooled = generated_by_class(root, ["CR", "LP"])
     assert [p.name for p in pooled["CR"]] == ["gen_0_00000.png"]
     assert [p.name for p in pooled["LP"]] == ["gen_1_00000.png"]
+
+
+def check_find_label_layouts(tmp):
+    """find_label must resolve every documented YOLO layout.
+
+    Side-by-side pairs win at any depth (LoHi-WELD); a standard images/ tree
+    must map onto the labels/ tree beside the images root, including the
+    split-subfolder form images/<split>/x.jpg -> labels/<split>/x.txt, which
+    the earlier parent.parent probe never found - those images were silently
+    dropped as "unlabeled".
+    """
+    from prepare_yolo_crops import find_label
+
+    # Side by side at depth (the LoHi-WELD high_resolution_welds layout).
+    beside = tmp / "beside" / "high_resolution_welds"
+    beside.mkdir(parents=True)
+    (beside / "x.jpg").write_bytes(b"jpg")
+    (beside / "x.yolo").write_text("0 0.5 0.5 0.1 0.1\n", encoding="utf-8")
+    assert find_label(beside / "x.jpg") == beside / "x.yolo"
+
+    # Flat images/ + labels/ beside each other.
+    flat = tmp / "flat"
+    (flat / "images").mkdir(parents=True)
+    (flat / "labels").mkdir()
+    (flat / "images" / "y.png").write_bytes(b"png")
+    (flat / "labels" / "y.txt").write_text("", encoding="utf-8")
+    assert find_label(flat / "images" / "y.png") == flat / "labels" / "y.txt"
+
+    # Split subfolders: images/<split>/x.jpg -> labels/<split>/x.txt.
+    split = tmp / "split"
+    (split / "images" / "train").mkdir(parents=True)
+    (split / "labels" / "train").mkdir(parents=True)
+    (split / "images" / "train" / "z.jpg").write_bytes(b"jpg")
+    (split / "labels" / "train" / "z.txt").write_text("", encoding="utf-8")
+    assert (find_label(split / "images" / "train" / "z.jpg")
+            == split / "labels" / "train" / "z.txt")
+
+    # No label anywhere: None, not a crash or a wrong fallback.
+    orphan = tmp / "orphan"
+    (orphan / "images").mkdir(parents=True)
+    (orphan / "images" / "w.jpg").write_bytes(b"jpg")
+    assert find_label(orphan / "images" / "w.jpg") is None
+
+
+def check_eval_fid_generated_tree_mapping(tmp):
+    """Standalone FID must read a generate.py tree: class_i + classes.txt.
+
+    generate.py writes positional class_0/class_1/... folders while the real
+    tree uses real class names; without mapping through the classes.txt
+    manifest the class-balanced comparison finds no shared class and the
+    README quickstart FID command dies. The manifest contract must match
+    augment.generated_by_class: folder class_i <-> manifest line i.
+    """
+    from data import ClassFolderDataset
+    from eval_fid import remap_generated_classes
+
+    root = tmp / "gen_fid_pool"
+    (root / "class_0").mkdir(parents=True)
+    (root / "class_1").mkdir()
+    (root / "class_0" / "gen_0_000000.png").write_bytes(b"png")
+    (root / "class_1" / "gen_1_000000.png").write_bytes(b"png")
+
+    ds = ClassFolderDataset(str(root), img_size=64, channels=3)
+    assert ds.classes == ["class_0", "class_1"]
+
+    # No manifest: refuse to guess the class names.
+    try:
+        remap_generated_classes(ds, root, ["good", "defect"])
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("positional folders without classes.txt must be refused")
+
+    (root / "classes.txt").write_text("good\ndefect\n", encoding="utf-8")
+    remap_generated_classes(ds, root, ["defect", "good"])
+    assert ds.classes == ["defect", "good"], ds.classes
+    assert {ds.classes[label] for _, label in ds.samples} == {"good", "defect"}
+
+    # A class folder beyond the manifest length: refuse rather than crash.
+    (root / "class_2").mkdir()
+    ds3 = ClassFolderDataset(str(root), img_size=64, channels=3)
+    try:
+        remap_generated_classes(ds3, root, ["good", "defect"])
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("class_i beyond the manifest length must be refused")
+    (root / "class_2").rmdir()
+
+    # A manifest naming classes the real tree lacks: explicit refusal.
+    (root / "classes.txt").write_text("good\nother\n", encoding="utf-8")
+    ds4 = ClassFolderDataset(str(root), img_size=64, channels=3)
+    try:
+        remap_generated_classes(ds4, root, ["good", "defect"])
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("a manifest naming unknown classes must be refused")
+
+    # Real-named trees are left untouched (no manifest, identity mapping).
+    named = tmp / "named_pool"
+    (named / "good").mkdir(parents=True)
+    (named / "good" / "a.png").write_bytes(b"png")
+    ds5 = ClassFolderDataset(str(named), img_size=64, channels=3)
+    before = list(ds5.samples)
+    remap_generated_classes(ds5, named, ["good", "defect"])
+    assert ds5.samples == before and ds5.classes == ["good"]
 
 
 def check_hinge_losses_and_bounded_score():
@@ -858,6 +970,8 @@ if __name__ == "__main__":
         check_filling_rate_protocol()
         check_synthetic_prefix_nesting()
         check_generated_class_manifest(tmp)
+        check_find_label_layouts(tmp)
+        check_eval_fid_generated_tree_mapping(tmp)
 
         # Three epochs with --kl_warmup 1,1 so the run passes through both the
         # zero-beta phase (epoch 1) and the ramp (epochs 2-3).
@@ -881,6 +995,12 @@ if __name__ == "__main__":
         sweep_dir = tmp / "runs" / "sweep"
         for expected in ("results.txt", "sweep_metrics.csv", "cm_r0.npy", "cm_r1.npy"):
             assert (sweep_dir / expected).is_file(), f"missing {expected}"
+
+        # The README quickstart FID command: the standalone tool must consume
+        # generate.py's positional class_i tree directly via its manifest.
+        run(["--real_root", root, "--fake_root", str(tmp / "smoke_gen"),
+             "--img_size", "64", "--channels", "3", "--batch_size", "8",
+             "--num_workers", "0"], "eval_fid")
         print("SMOKE TEST OK")
     except BaseException:
         print(f"SMOKE TEST FAILED - keeping temp dir for inspection: {tmp}")

@@ -29,11 +29,15 @@ also what the tagged v0.2.0 runs used, so a recorded v0.2.0 config still
 reproduces a v0.2.0 run. The recommended GroupNorm + weighted-sampler
 configuration and its evidence are in docs/CALIBRATION.md section 9.
 
-Leakage-free by construction. Images are split into a train pool and a real-only
-held-out test set *first*; the generator only ever sees subsets drawn from the
-train pool, and its validation set is drawn from train-pool images the generator
-does not train on. The downstream classifier can therefore measure augmentation
-gain on images the generator has never seen.
+Crop-level split, not source-isolated. Images are split into a train pool and a
+real-only held-out test set *first*; the generator only ever sees subsets drawn
+from the train pool, and its validation set is drawn from train-pool images the
+generator does not train on, so crop indices never cross pools. The split unit
+is the individual crop, though, not the source image: crops cut from the same
+source frame can sit on both sides. Measured on the published seeds, 99.8-100%
+of test crops share a source frame with the train pool (docs/USAGE.md
+limitations) - the downstream numbers are evidence of augmentation gain under
+this protocol, not of generalisation to unseen sources.
 
 Validation is deterministic: it decodes the posterior mean `mu` rather than a
 reparameterized sample, so the early-stopping and LR-schedule signals are not
@@ -223,7 +227,7 @@ def main():
     if not ds.samples:
         raise SystemExit(f"no images found under {args.data_root}")
 
-    # ---- leakage-free splits -------------------------------------------------
+    # ---- crop-level splits (indices disjoint; source frames may straddle) -----
     train_pool, test_idx = make_splits(ds.samples, args.test_frac, args.seed)
     subset_counts = parse_name_counts(args.subset)
     gen_train = sample_named_subset(ds, subset_counts, train_pool, args.seed)
@@ -342,18 +346,22 @@ def main():
             fake_g = dec(torch.randn(b, args.latent_dim, device=device), y)
             l_adv = hinge_g(dis(fake_g, y))
             loss_g = loss_cvae + args.perc_weight * l_perc + args.adv_weight * l_adv
+            if not torch.isfinite(loss_g):
+                # Stop before backward() plants NaN gradients in the weights;
+                # otherwise the rest of the run silently writes nan history rows.
+                raise SystemExit(
+                    f"non-finite generator loss at epoch {epoch} step {steps + 1} "
+                    f"(loss_g={loss_g.item():.4g}); training diverged")
             opt_g.zero_grad(); loss_g.backward(); opt_g.step()
 
             # ---- discriminator side: separate backward pass, same minibatch ---
             fake_d = dec(torch.randn(b, args.latent_dim, device=device), y).detach()
             loss_d = hinge_d(dis(x, y), dis(fake_d, y))
-            if not (torch.isfinite(loss_g) and torch.isfinite(loss_d)):
-                # Stop before backward() plants NaN gradients in the weights;
-                # otherwise the rest of the run silently writes nan history rows.
+            if not torch.isfinite(loss_d):
+                # Same guard as the generator side, before this network's backward().
                 raise SystemExit(
-                    f"non-finite loss at epoch {epoch} step {steps + 1} "
-                    f"(loss_g={loss_g.item():.4g}, loss_d={loss_d.item():.4g}); "
-                    f"training diverged")
+                    f"non-finite discriminator loss at epoch {epoch} step {steps + 1} "
+                    f"(loss_d={loss_d.item():.4g}); training diverged")
             opt_d.zero_grad(); loss_d.backward(); opt_d.step()
 
             agg["recon"] += l_recon.item(); agg["kl"] += l_kl.item()

@@ -331,7 +331,7 @@ epochs, RTX 4000 Ada Laptop, 12 GB):
 subset used for the headline result (1,140 images) trains in roughly 40 minutes
 at 224x224 including per-epoch FID.
 
-## 5. FID reference size: 600 per class
+## 5. FID reference size: 200 per class
 
 FID features are 2048-dimensional, so a reference set smaller than 2048 images
 gives a rank-deficient covariance. `eval_fid.fid_from_stats` handles that - it
@@ -551,6 +551,10 @@ published result.
 | `--kl_warmup ZERO,RAMP` | off | `10,50` | implemented and tested, **not training-validated** |
 | `--monitor` | `val_loss` | n/a | only needed together with `--kl_warmup` |
 
+One journal KL detail is **not** implemented: its Eq. 9 free-bits form
+`max(0, KL - delta)` (the paper gives no value for `delta`). `--kl_warmup`
+implements the annealing schedule only; the logged term is plain KL.
+
 ### The discriminator equilibrium: a normalisation change, not a data-scale one
 
 Until this arm, every run in this repo showed a **dominant discriminator**: over
@@ -661,8 +665,8 @@ its r=0 baseline, and mean pore F1 0.4658, +0.1132. The individual r=1.0
 macro-F1 deltas are +0.0321, +0.0895, and -0.0018; it is a positive mean effect,
 not an improvement guaranteed on every seed. The three-seed data do **not**
 establish a monotone curve or a unique optimum at r=1.0: r=0.50 has the slightly
-higher complete-seed macro-F1 mean (0.7210), and r=0.25 is 0.7419 on the two valid
-seeds.
+higher complete-seed macro-F1 mean (0.7210), and r=0.25 is 0.7419 on the two
+retained seeds.
 
 The matched BatchNorm control preserves the central sign flip: r=1.0 is 0.7009,
 +0.0677 over its own 0.6332 real-only baseline, and its pore F1 rises from 0.4000
@@ -671,13 +675,16 @@ Together these measurements rule out the claim that GroupNorm or the weighted
 sampler is *required* for the positive r=1.0 result. They do not estimate either
 switch's separate benefit.
 
-**The seed-42 r=0.25 score is invalid, not the whole ratio.** That classifier's
-loss sat at 0.0001 by epoch 90, then reported 0.2617 at epoch 100, and
-`train_classifier.py` scores the final epoch (section 10; the default became
-`--selection best_val` in v0.4.0, and `--selection final` still reproduces this
-behaviour). Its spiked weights are
-excluded; the r=0.25 GroupNorm statistics therefore aggregate only seeds 43 and
-44 and are marked n=2.
+**The seed-42 r=0.25 arm is excluded from the aggregate, not declared invalid.**
+That classifier's loss sat at 0.0001 by epoch 90, then reported 0.2617 at epoch
+100, and `train_classifier.py` in that sweep scored the final epoch (section 10;
+the default became `--selection best_val` in v0.4.0, and `--selection final`
+still reproduces this behaviour). Under that protocol a late spike is itself a
+behaviour of the protocol, and the exclusion was applied after seeing the
+results - the n=2 aggregate is post-hoc and exploratory, not a pre-registered
+validity criterion. The r=0.25 GroupNorm statistics therefore cover only seeds
+43 and 44 and are marked n=2; the excluded score itself (macro-F1 0.5868) is
+retained in the published CSV under `results/metrics/sweep_paper2_s42/`.
 
 **Four things this does not establish.**
 
@@ -716,12 +723,36 @@ excluded; the r=0.25 GroupNorm statistics therefore aggregate only seeds 43 and
 3. *The GroupNorm + balanced-sampler aggregate has three seeds, but the control
    has one.* Seeds 43 and 44 retrained the generator and regenerated their pools,
    so the GroupNorm values include generator as well as classifier variation. The
-   r=0.25 aggregate has only two valid scores. Section 10's fixed-seed classifier
+   r=0.25 aggregate has only two retained scores. Section 10's fixed-seed classifier
    repeatability warning remains relevant, and a three-seed control would still be
    required to estimate a reliable control mean or an incremental switch effect.
 4. *The absolute numbers remain non-comparable to the papers'*, for the reasons in
    section 8: a from-scratch ResNet-18 over single images, not an LSTM/GRU over
    21-frame sequences.
+
+### Split-overlap measurement: crop-level, not source-isolated
+
+Read-only audit of the published splits (added in v0.5.1). Source identity is
+recovered exactly from the crop filenames - `prepare_yolo_crops.py` writes
+`<encoded-source-path>_<k:03d>.png`, so stripping the trailing three-digit box
+index recovers the source image - and the seed-42/43/44 splits were recomputed
+with the exact `make_splits` / `sample_named_subset` logic, verified
+index-for-index identical to the shipped implementation via SHA-256 of the
+index lists.
+
+The 8,012 crops come from 1,022 source frames (2-18 crops each, median 8), and
+nothing in the split groups by source frame:
+
+| seed | test crops sharing a source frame with the train pool | ... with the 1,090-crop training subset | test source frames that also feed the train pool |
+|---|---|---|---|
+| 42 | 1,599 / 1,603 (99.8%) | 1,014 (63.3%) | 812 / 813 (99.9%) |
+| 43 | 1,603 / 1,603 (100%) | 1,069 (66.7%) | 802 / 802 (100%) |
+| 44 | 1,603 / 1,603 (100%) | 1,043 (65.1%) | 820 / 820 (100%) |
+
+The split therefore guarantees crop-index disjointness only. Absolute
+downstream numbers are optimistic about unseen sources; the filling-rate arms
+share the test set and the baseline subset, so within-run comparisons are less
+affected. A source-frame-grouped split is the experiment a fork should run.
 
 ### KL annealing: implemented, tested, deliberately not trained
 
@@ -818,7 +849,10 @@ The matched latent-128 BatchNorm control is the same three commands pointed at
 `runs/probe_eq_g0.1`, into its own pool directory - `verify_generation_meta`
 refuses to sweep a pool whose `subset`, `seed` or `test_frac` disagree with the
 sweep's, and `generate.py` writes the seed from the checkpoint, so pool and sweep
-have to be produced as a matched pair rather than reused across arms.
+have to be produced as a matched pair rather than reused across arms. That check
+compares the split *configuration*, not data identity: re-cropping, adding or
+renaming images changes the actual split without changing the recorded flags,
+so the pool must be regenerated whenever the underlying crop tree changes.
 
 ```bash
 python src/generate.py --ckpt runs/probe_eq_g0.1/joint.pt --seed 42 \
@@ -834,7 +868,8 @@ python src/train_classifier.py --data_root data/lohi --gen_root generated_ctrl \
 
 `results/filling_rate_multiseed.png` is drawn from the `sweep_metrics.csv` files of
 the three runs above, so it needs neither a GPU nor the dataset. `--exclude` drops
-the invalid seed-42 `r=0.25` arm from the aggregate without removing that ratio
+the seed-42 `r=0.25` arm - the post-hoc exclusion discussed above - from the
+aggregate without removing that ratio
 from seeds 43 and 44, which is why that ratio is annotated `n=2` in the figure;
 the band is the sample standard deviation, the same convention as the table above.
 
@@ -848,6 +883,12 @@ python src/make_multiseed_figure.py \
   --reference "matched latent-128 BatchNorm control (seed 42)=runs/sweep_ctrl_s42_clean/sweep_metrics.csv" \
   --minority pore --out results/filling_rate_multiseed.png
 ```
+
+The `sweep_metrics.csv` inputs (and the generator `history.csv` logs of the
+arms above) are published under `results/metrics/`, one subdirectory per run
+name, as byte-identical copies; replacing `runs/` with `results/metrics/` in
+the command above reproduces the figure without any original run directory.
+Provenance for each file: `results/metrics/README.md`.
 
 The committed showcase grids come from the same recommended checkpoint but from a
 *separate* pool. `generated_paper2` holds `stain=0` because balance-to-max needs no
@@ -913,6 +954,12 @@ evidence, in either direction. The README's caveat ("treat differences under
 ~0.02 macro-F1 as noise") is in the right ballpark for macro-F1 but too
 optimistic for the minority class, where 61 test images make F1 granular: one
 image is worth ~0.016 of pore recall on its own.
+
+The generator side has its own reproduction caveat: `compute_fid` and
+`save_sample_grid` draw from the same default RNG stream as training, so
+changing `--fid_every` or `--sample_every` changes the number of draws before
+each step and shifts every subsequent training random stream. Exact
+reproduction therefore keeps the diagnostic settings identical too.
 
 ### Cause 2: the final epoch is what gets scored
 

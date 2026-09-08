@@ -32,6 +32,8 @@ dataset files to this repository or attach them to releases.
 
   yielding 8,012 crops: stain 3,540 / discontinuity 2,975 / deposit 1,193 /
   pore 304 - an **11.6x** imbalance, close to the conference paper's 14.7x.
+  (`--min_side 16` filters on each box's **longest** edge - the behaviour the
+  historical 8,012-crop protocol has always used.)
   Crops keep their native **RGB** channels: the papers' grayscale is a property
   of their camera, not of the method, and colour carries defect signal here.
 - **Provenance**: the LoHi-WELD repository is built on the YOLOv7 implementation

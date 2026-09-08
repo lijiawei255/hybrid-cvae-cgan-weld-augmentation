@@ -88,7 +88,7 @@ python src/make_paper_figures.py --data_root data/lohi \
 # 独立 FID（默认后端：pytorch-fid）
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 # 本仓库已发表的 FID 数字用的是：
-#   python src/eval_fid.py ... --fid_backend legacy
+#   python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3 --fid_backend legacy
 ```
 
 会议论文默认（latent 32、BatchNorm、不加权采样）见 [`CHANGELOG.md`](CHANGELOG.md) 的 v0.2.0。期刊扩展开关、迁移到你自己的类文件夹图像、完整局限列表：[`docs/USAGE.md`](docs/USAGE.md)。
@@ -114,7 +114,7 @@ python src/prepare_yolo_crops.py \
 
 单 seed（42）。生成器：在论文规模子集（pore 40 / deposit 150 / discontinuity 300 / stain 600）上联合训练 CVAE-CGAN，70 epoch 中于第 25 epoch 早停（最佳 epoch 15）。诊断：FID 从 371 降至 216 后在 ~200 平台（仅作诊断，不可与任何已发表 FID 比较）；重建 MSE 0.049–0.060，对照常数均值基线 0.062；样图网格显示清晰的类形态。
 
-**Filling-rate 扫描**——每个 ratio 一个从零训练的 ResNet-18，各 100 epoch，全部在同一个 held-out 纯真实测试集（1,603 张）上评估：
+**Filling-rate 扫描**——每个 ratio 一个从零训练的 ResNet-18，各 100 epoch，全部在同一个 held-out 纯真实测试集（1,603 张）上评估（划分为**裁剪级**——实测 99.8–100% 的测试裁剪与训练池共享同一源图，见[局限列表](docs/USAGE.md#limitations)）：
 
 | ratio | accuracy | macro-F1 | weighted-F1 | deposit | discontinuity | pore | stain |
 |---|---|---|---|---|---|---|---|
@@ -136,7 +136,7 @@ python src/prepare_yolo_crops.py \
 > 0.6785 ± 0.0447 的纯真实均值高 +0.0399；pore F1 为 **0.4658 ± 0.0475**，
 > 高 +0.1132。这支持 r=1.0 的*平均*正向作用，但不支持单调曲线或 r=1.0
 > 是唯一最优。匹配的 BatchNorm、未加权采样对照在 r=1.0 也有正向结果，
-> 因此 GroupNorm 和加权采样**不是**符号反转的必要条件。完整表格和限制见
+> 因此 GroupNorm 和加权采样**不是**符号反转的必要条件。完整表格、划分重叠测量与限制见
 > [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 9 节。
 
 `results/` 中的图。**每张图都属于某一次特定运行**：
@@ -149,7 +149,7 @@ python src/prepare_yolo_crops.py \
 | `confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png` | 已发布的 v0.2.0 扫描 |
 | `real_vs_generated.png`、`class_*.png` | 推荐的 `runs/paper2_gn_wrs` 生成器 |
 
-第一行与最后一行的复现命令见 `docs/CALIBRATION.md` 第 9 节。
+第一行与最后一行的复现命令见 `docs/CALIBRATION.md` 第 9 节。这些图背后的原始指标导出（扫描与训练历史 CSV）发布在 [`results/metrics/`](results/metrics/README.md) 下，每个运行名一个子目录，因此无需原始运行目录即可复现那些图命令。
 
 ![按 seed 聚合的填充率曲线](results/filling_rate_multiseed.png)
 

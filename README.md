@@ -130,7 +130,7 @@ python src/make_paper_figures.py --data_root data/lohi \
 # Standalone FID (default backend: pytorch-fid).
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 # Published in-repo FID numbers used:
-#   python src/eval_fid.py ... --fid_backend legacy
+#   python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3 --fid_backend legacy
 ```
 
 Conference-paper defaults (latent 32, BatchNorm, no weighted sampler) are in
@@ -177,7 +177,9 @@ MSE 0.049-0.060 against a constant-mean baseline of 0.062; sample grids show
 clear per-class morphology.
 
 **Filling-rate sweep** - one from-scratch ResNet-18 per ratio, 100 epochs each,
-all evaluated on the same held-out real-only test set (1,603 images):
+all evaluated on the same held-out real-only test set (1,603 images; the split
+is crop-level - measured, 99.8-100% of test crops share a source frame with
+the train pool, see the [limitations](docs/USAGE.md#limitations)):
 
 | ratio | accuracy | macro-F1 | weighted-F1 | deposit | discontinuity | pore | stain |
 |---|---|---|---|---|---|---|---|
@@ -205,7 +207,7 @@ Two findings, reported as measured:
 > r=1.0 effect, but not a monotone curve or a unique optimum there. The
 > matched BatchNorm, unweighted-sampler control also has a positive r=1.0
 > result, so GroupNorm and weighted sampling are **not required** for the
-> sign flip. Full tables and limitations:
+> sign flip. Full tables, the split-overlap measurement and limitations:
 > [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 9.
 
 Figures in `results/`. **Each one belongs to a specific run**:
@@ -219,6 +221,10 @@ Figures in `results/`. **Each one belongs to a specific run**:
 | `real_vs_generated.png`, `class_*.png` | the recommended `runs/paper2_gn_wrs` generator |
 
 Reproduce commands for the first and last rows: `docs/CALIBRATION.md` section 9.
+The raw metric exports behind these figures (sweep and training-history CSVs)
+are published under [`results/metrics/`](results/metrics/README.md), one
+subdirectory per run name, so those figure commands reproduce without the
+original run directories.
 
 ![Seed-aggregated filling-rate curve](results/filling_rate_multiseed.png)
 

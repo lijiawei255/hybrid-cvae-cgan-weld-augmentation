@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Data loading, preprocessing and leakage-free split helpers.
+"""Data loading, preprocessing and crop-level split helpers.
 
 Two conventions here are dictated by the reproduced paper and are relied on by
 every other module - keep them consistent if you change them:
@@ -158,11 +158,14 @@ class ListDataset(Dataset):
 
 
 def make_splits(samples, test_frac=0.2, seed=42):
-    """Stratified (train_pool, test) index split.
+    """Stratified (train_pool, test) index split at the individual-crop level.
 
     The test half is real-only and held out from *both* the generator and the
-    classifier, which is what makes the downstream gain measurement honest.
-    Deterministic for a given seed so separate scripts agree on the same split.
+    classifier, so crop indices never cross pools. Nothing groups crops by
+    source image, though, so crops cut from the same source frame can sit on
+    both sides (see docs/USAGE.md limitations for the measured overlap on the
+    published seeds). Deterministic for a given seed so separate scripts agree
+    on the same split.
     """
     rng = random.Random(seed)
     by_label = {}
