@@ -2,6 +2,15 @@
 
 **Language / 语言:** English | [中文](README_zh-CN.md)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/lijiawei255/hybrid-cvae-cgan-weld-augmentation/actions/workflows/smoke.yml/badge.svg)](https://github.com/lijiawei255/hybrid-cvae-cgan-weld-augmentation/actions/workflows/smoke.yml)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg)](https://www.python.org/)
+[![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C.svg)](https://pytorch.org/)
+[![Conference paper DOI](https://img.shields.io/badge/DOI-10.1109%2FCYBER67662.2025.11168313-007EC7.svg)](https://doi.org/10.1109/CYBER67662.2025.11168313)
+[![Journal extension DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.ymssp.2026.114138-007EC7.svg)](https://doi.org/10.1016/j.ymssp.2026.114138)
+[![Zenodo DOI](https://img.shields.io/badge/Zenodo-10.5281%2Fzenodo.22660143-0067A8.svg)](https://doi.org/10.5281/zenodo.22660143)
+[![Status: complete / as-is](https://img.shields.io/badge/status-complete_/_as--is-lightgrey.svg)](CHANGELOG.md)
+
 > The English README is normative. The Chinese translation (`README_zh-CN.md`) is
 > maintained in sync with it; if the two ever diverge, the English version wins.
 
@@ -31,6 +40,28 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 Longer operating notes (journal-extension switches, own-data porting, layout,
 limitations) live in [`docs/USAGE.md`](docs/USAGE.md). Measured deviations from
 the papers live in [`docs/CALIBRATION.md`](docs/CALIBRATION.md).
+
+## Quick facts
+
+| | |
+|---|---|
+| **Task** | Class-conditional augmentation of small, imbalanced weld-defect image datasets |
+| **Method** | Single jointly-trained hybrid CVAE-CGAN: one decoder is both `D(z, y)` and `G(z, y)`; MSE + KL + VGG19 perceptual + hinge adversarial (spectral norm) |
+| **Data** | Public LoHi-WELD weld-bead crops (the papers used proprietary WAAM melt-pool imagery; results are not comparable) |
+| **Entry points** | `smoke_test.py` -> `train_joint.py` -> `generate.py` -> `train_classifier.py` (+ `eval_fid.py`), all in `src/` |
+| **Headline result** | Balance-to-max (r=1.0) macro-F1 0.7185 ± 0.0019 across three seeds, +0.0399 over the real-only mean (see [Results](#results---lohi-weld-current)) |
+| **Status** | Complete / as-is; frozen reference implementation, v0.5.1 ([CHANGELOG](CHANGELOG.md)) |
+
+## Contents
+
+- [What this repository is and is not](#what-this-repository-is-and-is-not)
+- [Scope at a glance](#scope-at-a-glance)
+- [Disclaimer](#disclaimer)
+- [Quickstart](#quickstart)
+- [Data](#data)
+- [Results - LoHi-WELD (current)](#results---lohi-weld-current)
+- [License](#license)
+- [How to cite](#how-to-cite)
 
 ## What this repository is and is not
 
@@ -266,7 +297,8 @@ If this re-implementation helps your work, cite the **original papers** and the
 **datasets** rather than this repo. [`CITATION.cff`](CITATION.cff) lists two
 groups: the reproduced papers plus every dataset's required citations, and the
 implementation-component references (FID, t-SNE, InceptionV3, ResNet-18,
-VGG19).
+VGG19). Versioned snapshots of this repository are archived on Zenodo:
+[10.5281/zenodo.22660143](https://doi.org/10.5281/zenodo.22660143).
 
 ```bibtex
 % --- Primary method reference (conference paper being re-implemented) ---

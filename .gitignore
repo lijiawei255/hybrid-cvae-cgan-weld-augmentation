@@ -228,6 +228,8 @@ REPRODUCTION_GUIDE.md
 *.pt
 *.pth
 *.ckpt
+# GitHub social-preview banner asset, uploaded via repo settings only
+/social_preview.png
 # editor/agent tooling, never part of the published repo
 .qoder/
 .cursor/
