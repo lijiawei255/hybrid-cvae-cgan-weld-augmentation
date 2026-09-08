@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: "Li"
     given-names: "Jiawei"
-version: 0.5.0
-date-released: "2026-09-07"
+version: 0.5.1
+date-released: "2026-09-08"
 doi: "10.5281/zenodo.22645145"
 repository-url: "https://github.com/lijiawei255/hybrid-cvae-cgan-weld-augmentation"
 license: MIT

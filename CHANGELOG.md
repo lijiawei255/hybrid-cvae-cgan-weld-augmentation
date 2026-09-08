@@ -9,6 +9,88 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
+## v0.5.1 - 2026-09-08
+
+Interface fixes and disclosure pass prompted by an external audit and a
+paper-vs-code method review. No method code, training defaults, or published
+numbers change; nothing was retrained.
+
+### Fixed
+
+- **Standalone FID could not read a `generate.py` output tree.** The generated
+  side uses positional `class_0/class_1/...` folders while real trees use real
+  class names, and `eval_fid.py` compared folder names directly, so the
+  default balanced mode died with "no class is present in both trees" on the
+  README quickstart command (a failure mode introduced by the v0.3.1
+  name-based balancing fix). `eval_fid.py` now maps positional folders through
+  the pool's `classes.txt` manifest - the same contract `augment.py` uses -
+  and refuses explicitly on a missing manifest, an out-of-range `class_i`
+  index, or a manifest naming classes the real tree lacks. Real-named fake
+  trees are untouched; FID backends and scales are unchanged, and in-training
+  FID never used this path. Pinned by a new smoke-test check plus an
+  end-to-end `generate -> eval_fid` stage.
+- **The v0.5.0 `find_label` fix for split-subfolder YOLO layouts never
+  worked.** Its parallel-label candidates were anchored at the image's
+  grandparent, probing `dataset/images/labels/...` instead of
+  `dataset/labels/...`, so `images/<split>/x.jpg` still fell through as
+  "no label". `find_label` now anchors at the nearest `images` ancestor and
+  mirrors the image's path under it into the sibling `labels` tree, covering
+  both `images/x.jpg -> labels/x.txt` and `images/<split>/x.jpg ->
+  labels/<split>/x.txt`; side-by-side labels keep priority. Pinned by a new
+  smoke-test check.
+- **The non-finite loss guard ran after the generator's `backward()/step()`**
+  in `train_joint.py`, so a non-finite generator loss had already written NaN
+  gradients into the weights before the abort its comment promised to
+  prevent. Generator and discriminator losses are now each checked before
+  their own network's backward; update order and all finite-loss behaviour
+  are unchanged.
+
+### Changed
+
+- `--min_side`'s help text now states the longest-edge semantics the filter
+  has always implemented (`max(bw, bh) < min_side`); filtering behaviour and
+  the historical 8,012-crop protocol are unchanged.
+- `verify_generation_meta` prints a note when `meta.json` is missing instead
+  of silently skipping the check.
+
+### Added
+
+- **`results/metrics/`: the raw metric exports behind the published figures
+  and tables** - the three seed sweeps plus the matched control and the
+  v0.2.0 sweep (`sweep_metrics.csv`), and the generator training histories
+  the docs quote (`history.csv`). Byte-identical copies, SHA-256 verified,
+  per-file provenance in `results/metrics/README.md`. The documented
+  `make_multiseed_figure.py` command now runs from these copies alone.
+
+### Docs
+
+- **Split source-overlap disclosure.** The split is crop-level, not
+  source-isolated: measured on the published seed-42/43/44 splits (8,012
+  crops from 1,022 source frames, median 8 crops per frame), 99.8-100% of
+  test crops share a source frame with the train pool and 63-67% with the
+  1,090-crop training subset. The "Leakage-free by construction" wording is
+  replaced by this measured statement (README both languages, USAGE
+  limitations, CALIBRATION section 9 with method and table, and the affected
+  docstrings). Absolute downstream numbers are optimistic about unseen
+  sources; the filling-rate arms share the leakage, so within-run
+  comparisons are less affected.
+- The seed-42 r=0.25 exclusion is reworded from "invalid" to a post-hoc,
+  exploratory aggregate exclusion (CALIBRATION sections 9-10, smoke test);
+  all numbers and n counts are unchanged.
+- New method disclosures from a full paper-vs-code review: the journal's
+  projection discriminator (Eq. 4) and free-bits KL form (Eq. 9) are not
+  implemented (USAGE, CALIBRATION section 9); the perceptual loss notes that
+  neither paper names VGG19 layers. CALIBRATION section 5's stale
+  "600 per class" heading corrected to the 200 the body and code use.
+- `verify_generation_meta` documented as a split-*configuration* check, not
+  data identity; pools must be regenerated after any change to the crop
+  tree (CALIBRATION section 9, USAGE porting checklist).
+- Reproduction note: `compute_fid`/`save_sample_grid` draw from the training
+  RNG stream, so exact reproduction keeps `--fid_every`/`--sample_every`
+  identical (CALIBRATION section 10, USAGE limitations).
+- README (both languages): the legacy-FID quickstart command is written out
+  in full instead of `...`.
+
 ## v0.5.0 - 2026-09-07
 
 Correction and hardening release. Published tables are unchanged; every
