@@ -105,7 +105,10 @@ def verify_generation_meta(gen_root, subset, seed, test_frac=None):
     """
     meta_path = Path(gen_root) / "meta.json"
     if not meta_path.is_file():
-        return  # pools written before meta.json existed cannot be checked
+        print(f"note: {meta_path} is missing; skipping the split-configuration "
+              f"consistency check (pools written before meta.json existed cannot "
+              f"be checked)")
+        return
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     problems = []
     # Subsets are compared as parsed mappings, so a reordered 'a=1,b=2' against

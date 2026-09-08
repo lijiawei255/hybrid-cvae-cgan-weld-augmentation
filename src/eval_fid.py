@@ -7,6 +7,9 @@ community PyTorch port of the official TensorFlow Inception weights. That is
 an evaluation-infrastructure choice, not a change to the paper method. This
 module still owns the weld-specific protocol around that library:
 
+* positional ``class_<i>`` folders written by ``src/generate.py`` are mapped
+  to real class names through that tree's ``classes.txt`` manifest before any
+  folder-name comparison (the same contract ``augment.py`` uses);
 * class-balanced sampling over classes present in both trees, so a
   balance-to-max pool that skips a majority class does not fold a class-ratio
   difference into the score;
@@ -25,7 +28,9 @@ Two details that are easy to get wrong on the legacy path:
 """
 import argparse
 import random
+import re
 import warnings
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -34,6 +39,7 @@ from scipy.linalg import LinAlgWarning, sqrtm
 from torch.utils.data import DataLoader
 from torchvision.models import Inception_V3_Weights, inception_v3
 
+from augment import CLASS_MANIFEST
 from data import ListDataset, assert_channels_match_data, build_loader
 
 FID_BACKENDS = ("pytorch_fid", "legacy")
@@ -183,6 +189,51 @@ def balanced_labels(num_classes, per_class, device):
     return torch.arange(num_classes, device=device).repeat_interleave(per_class)
 
 
+def remap_generated_classes(ds, root, real_classes):
+    """Map a generate.py tree's positional class_<i> folders to real class names.
+
+    ``src/generate.py`` writes ``class_0/``, ``class_1/``, ... plus a
+    ``classes.txt`` manifest recording which real class each index stands for
+    (``augment.generated_by_class`` consumes the same contract). Without this
+    mapping the generated folder names never match the real tree's names and
+    the class-balanced comparison finds no shared class. Trees that already
+    use real class names are left untouched.
+    """
+    positional = [c for c in ds.classes if re.fullmatch(r"class_\d+", c)]
+    if not positional:
+        return
+    manifest = Path(root) / CLASS_MANIFEST
+    if not manifest.is_file():
+        raise SystemExit(
+            f"{manifest} is missing, so the positional class_i folders in {root} "
+            f"cannot be mapped to class names. Regenerate the pool with "
+            f"src/generate.py, or point --fake_root at a tree with real class "
+            f"names.")
+    names = [line.strip() for line in
+             manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+    mapping = {}
+    for folder in positional:
+        i = int(folder.split("_", 1)[1])
+        if i >= len(names):
+            raise SystemExit(
+                f"folder {folder} in {root} exceeds the {len(names)} entries "
+                f"recorded in {CLASS_MANIFEST}; the pool and its manifest "
+                f"disagree. Regenerate the pool with src/generate.py.")
+        mapping[folder] = names[i]
+    unknown = sorted(set(mapping.values()) - set(real_classes))
+    if unknown:
+        raise SystemExit(
+            f"{root} was generated for classes {names} but the real tree has "
+            f"{sorted(real_classes)}; unknown class(es) {unknown}. Regenerate "
+            f"the pool against this dataset or fix --real_root.")
+    name_of = {i: mapping.get(c, c) for i, c in enumerate(ds.classes)}
+    ds.classes = sorted(set(name_of.values()))
+    index = {name: i for i, name in enumerate(ds.classes)}
+    ds.samples = [(path, index[name_of[label]]) for path, label in ds.samples]
+    print(f"note: mapped positional class folders in {root} to real class names "
+          f"via {CLASS_MANIFEST} ({', '.join(mapping[c] for c in positional)})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--real_root", required=True, help="Real images (class subfolders)")
@@ -218,6 +269,7 @@ def main():
     ds_real, real_loader = build_loader(args.real_root, args.img_size, args.batch_size,
                                         **load_kw)
     ds_fake, fake_loader = build_loader(args.fake_root, args.img_size, args.batch_size, **load_kw)
+    remap_generated_classes(ds_fake, args.fake_root, ds_real.classes)
     if not args.no_balance:
         def counts_by_name(ds):
             counts = {}

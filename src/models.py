@@ -258,7 +258,9 @@ def kl_schedule(epoch, target, zero_epochs=0, ramp_epochs=0):
 class PerceptualLoss(nn.Module):
     """Frozen ImageNet VGG19 feature-space distance (the paper's perceptual term).
 
-    VGG19 is RGB-only, so single-channel inputs are replicated to three
+    Neither paper names which VGG19 layers to compare; this implementation
+    distances the final ``.features`` output. VGG19 is RGB-only, so
+    single-channel inputs are replicated to three
     channels; both sides are expected in [0, 1] and are ImageNet-normalised
     here. The target features are computed under no_grad because VGG19 is a
     fixed feature extractor - gradients only need to flow through the

@@ -83,13 +83,18 @@ dataset-specific:
 3. `--channels 3` for RGB, `--channels 1` for grayscale; `--img_size` divisible by 16.
 4. Match `--subset` to your minority count and desired `N_max`.
 5. If you enable `--fft_denoise`, pass it to both `train_joint.py` and `eval_fid.py`.
-6. Retrain the classifier sweep with the same `--subset`, `--seed`, and `--test_frac`.
+6. Retrain the classifier sweep with the same `--subset`, `--seed`, and
+   `--test_frac`, against a pool generated from the same **unchanged** crop
+   data. `verify_generation_meta` checks the split configuration, not data
+   identity - regenerate the pool after re-cropping, adding or renaming
+   images, because those change the actual split without changing the
+   recorded flags.
 
 ## Repository layout
 
 ```
 src/models.py             encoder, decoder (= generator), discriminator, losses
-src/data.py               class-folder loader, FFT denoising, leakage-free splits
+src/data.py               class-folder loader, FFT denoising, crop-level splits
 src/augment.py            balance-to-max filling-rate protocol
 src/prepare_yolo_crops.py detection-format datasets -> class-folder crops
 src/train_joint.py        joint CVAE-CGAN training (the paper's single phase)
@@ -120,8 +125,25 @@ glance" is the short form.
 - **Four hyperparameters were calibrated, not copied.** See
   [CALIBRATION.md](CALIBRATION.md).
 - **Mostly single seed**, except the three-seed GroupNorm arm.
-- **Leakage-free by construction.** The generator never sees the classifier's
-  held-out test images.
+- **Crop-level split, not source-isolated.** The generator and the classifier
+  share one stratified random split of individual crops: crop indices never
+  cross pools and the test set stays real-only, but crops cut from the same
+  source frame can sit on both sides. Measured on the published
+  seed-42/43/44 splits of the 8,012 crops (1,022 source frames, median 8
+  crops per frame), 99.8-100% of test crops come from source frames that
+  also contribute crops to the train pool, and 63-67% share a source frame
+  with the 1,090-crop training subset itself (method and table in
+  [CALIBRATION.md](CALIBRATION.md) section 9). Absolute downstream numbers
+  are therefore optimistic about generalisation to unseen sources; the
+  filling-rate arms share the same test set and baseline subset, so
+  within-run comparisons are less affected. Nothing here evidences
+  weld-level generalisation - grouping the split by source frame is the
+  experiment to run in a fork. "Source frame" is one LoHi-WELD original
+  image; grouping by weld would be coarser still.
+- **Diagnostic frequency is part of the training configuration.** FID checks
+  and sample grids draw from the same RNG stream as training, so changing
+  `--fid_every` or `--sample_every` changes the subsequent training random
+  stream. Exact reproduction keeps the diagnostic settings identical too.
 
 ### What this repo deliberately does not reproduce
 
@@ -129,5 +151,10 @@ glance" is the short form.
 - 21-frame temporal augmentation and sequence classifiers.
 - The paper's FFT step in the reported runs (implemented, off by default).
 - Conference BCE adversarial objective (hinge + spectral norm instead).
+- Journal projection discriminator, Eq. 4 (the discriminator keeps the
+  conference paper's spatial-map label conditioning, with hinge +
+  spectral normalisation on top).
+- Journal free-bits KL form, Eq. 9 `max(0, KL - delta)` (plain KL with an
+  optional beta ramp instead; the paper does not give `delta`).
 - Paper residual encoder conv body (plain 4x4 stride-2; drop-in replaceable).
 - DR/MDR (undefined on LoHi-WELD: no non-defect class).

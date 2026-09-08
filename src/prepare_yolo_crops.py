@@ -64,23 +64,24 @@ def read_class_names(input_root, classes_arg):
 
 
 def find_label(image_path):
-    """The label file for an image: sibling with .yolo/.txt, else parallel labels/.
+    """The label file for an image: sibling .yolo/.txt first, else parallel labels/.
 
-    Both common layouts are covered: flat labels/ beside images/, and the
-    split-subfolder form images/<split>/x.jpg -> labels/<split>/x.txt.
+    Side-by-side pairs (LoHi-WELD) win at any nesting depth. Otherwise the
+    closest ``images`` ancestor is taken as the images root and the image's
+    path under it is mirrored into a sibling ``labels`` tree, covering both
+    ``images/x.jpg -> labels/x.txt`` and the split-subfolder form
+    ``images/<split>/x.jpg -> labels/<split>/x.txt``.
     """
     for ext in LABEL_EXTENSIONS:
         sibling = image_path.with_suffix(ext)
         if sibling.is_file():
             return sibling
-    for ext in LABEL_EXTENSIONS:
-        parallel = image_path.parent.parent / "labels" / (image_path.stem + ext)
-        if parallel.is_file():
-            return parallel
-        split_dir = (image_path.parent.parent / "labels" / image_path.parent.name
-                     / (image_path.stem + ext))
-        if split_dir.is_file():
-            return split_dir
+    for images_root in (p for p in image_path.parents if p.name == "images"):
+        rel = image_path.relative_to(images_root)
+        for ext in LABEL_EXTENSIONS:
+            parallel = (images_root.parent / "labels" / rel).with_suffix(ext)
+            if parallel.is_file():
+                return parallel
     return None
 
 
@@ -109,7 +110,9 @@ def main():
     ap.add_argument("--margin", type=float, default=0.1,
                     help="fractional margin added around each box before cropping")
     ap.add_argument("--min_side", type=int, default=16,
-                    help="skip crops whose box side is below this many pixels")
+                    help="skip crops whose longest box edge is below this many "
+                         "pixels (the filter has always tested the longest edge; "
+                         "the flag name is kept for compatibility)")
     args = ap.parse_args()
 
     input_root = Path(args.input_root)
@@ -173,7 +176,8 @@ def main():
                 written += 1
 
     print(f"wrote {written} crops to {out_root} "
-          f"({no_label} images without labels, {skipped} boxes below --min_side, "
+          f"({no_label} images without labels, {skipped} boxes below --min_side "
+          f"on their longest edge, "
           f"{bad_lines} malformed/inverted boxes skipped)")
     for name, count in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {name:<20} {count}")
