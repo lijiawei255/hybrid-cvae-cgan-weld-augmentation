@@ -101,7 +101,10 @@ def main():
     num_classes = ckpt["num_classes"]
     latent_dim = ckpt["latent_dim"]
 
-    G = Decoder(channels, num_classes, latent_dim, ckpt["base_ch"], ckpt["img_size"]).to(device)
+    # Checkpoints written before --g_norm existed have no entry and were all
+    # trained with BatchNorm, so that is the right fallback.
+    G = Decoder(channels, num_classes, latent_dim, ckpt["base_ch"], ckpt["img_size"],
+                norm=ckpt.get("g_norm", "batch")).to(device)
     G.load_state_dict(state)
     G.eval()
 
@@ -136,7 +139,8 @@ def main():
                                            for l, n in sorted(counts.items())},
             "subset": ckpt.get("subset"), "seed": ckpt.get("seed"),
             "test_frac": ckpt.get("test_frac"), "img_size": ckpt["img_size"],
-            "channels": channels, "generator": str(args.ckpt)}
+            "channels": channels, "split_by": ckpt.get("split_by", "crop"),
+            "g_norm": ckpt.get("g_norm", "batch"), "generator": str(args.ckpt)}
     (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print("Generation finished ->", args.out_root,
           f"({sum(len(v) for v in written.values())} images)")

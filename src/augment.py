@@ -95,20 +95,35 @@ def generated_by_class(gen_root, classes):
     return out
 
 
-def verify_generation_meta(gen_root, subset, seed, test_frac=None):
-    """Refuse to sweep against a pool generated from a different split.
+def verify_generation_meta(gen_root, subset, seed, test_frac=None, img_size=None,
+                           channels=None, split_by=None, allow_missing_meta=False):
+    """Refuse to sweep against a pool generated from a different configuration.
 
     The r=0.0 condition is only meaningful if it is exactly the real data the
-    generator trained on. A retyped ``--subset``, a different ``--seed`` or a
-    different ``--test_frac`` would silently compare augmentation against the
-    wrong baseline, and the whole sweep would be measuring nothing.
+    generator trained on. A retyped ``--subset``, a different ``--seed``,
+    ``--test_frac`` or ``--split_by`` would silently compare augmentation against
+    the wrong baseline, and the whole sweep would be measuring nothing.
+    ``--img_size`` and ``--channels`` are checked too: a pool generated at a
+    different input representation is not a valid substitute either.
+
+    This compares the split *configuration*, not data identity: re-cropping,
+    adding or renaming images changes the actual split without changing any
+    recorded flag, so regenerate the pool whenever the crop tree changes.
+
+    A pool with no ``meta.json`` predates the file and cannot be checked at all.
+    That is refused unless ``allow_missing_meta`` is passed, so an unverifiable
+    pool has to be an explicit choice rather than a printed note nobody reads.
     """
     meta_path = Path(gen_root) / "meta.json"
     if not meta_path.is_file():
-        print(f"note: {meta_path} is missing; skipping the split-configuration "
-              f"consistency check (pools written before meta.json existed cannot "
-              f"be checked)")
-        return
+        if allow_missing_meta:
+            print(f"note: {meta_path} is missing; the split-configuration consistency "
+                  f"check was skipped because --allow_missing_meta was passed")
+            return
+        raise SystemExit(
+            f"{meta_path} is missing, so this pool's split configuration cannot be "
+            f"checked against this run. Regenerate the pool with src/generate.py, or "
+            f"pass --allow_missing_meta to sweep it unverified.")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     problems = []
     # Subsets are compared as parsed mappings, so a reordered 'a=1,b=2' against
@@ -123,6 +138,11 @@ def verify_generation_meta(gen_root, subset, seed, test_frac=None):
             and abs(meta["test_frac"] - test_frac) > 1e-12):
         problems.append(f"--test_frac {test_frac} but pool was generated with "
                         f"{meta['test_frac']}")
+    for flag, want, recorded in (("--img_size", img_size, meta.get("img_size")),
+                                 ("--channels", channels, meta.get("channels")),
+                                 ("--split_by", split_by, meta.get("split_by"))):
+        if want is not None and recorded is not None and recorded != want:
+            problems.append(f"{flag} {want} but pool was generated with {recorded}")
     if problems:
         raise SystemExit(
             f"{gen_root} was generated from a different split than this run uses: "
