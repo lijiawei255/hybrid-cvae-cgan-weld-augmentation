@@ -352,8 +352,15 @@ def _save(fig, output):
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_root", required=True)
-    ap.add_argument("--ckpt", required=True, help="joint.pt from train_joint.py")
+    ap.add_argument("--data_root", default=None,
+                    help="the real image tree. Needed only for the model-dependent "
+                         "figures; without it the CSV-only figures are still written.")
+    ap.add_argument("--ckpt", default=None,
+                    help="joint.pt from train_joint.py. Omit it (together with "
+                         "--data_root) to write only the figures that need no model: "
+                         "class distribution, training curves, filling-rate curve and "
+                         "confusion matrices. Those four reproduce from results/metrics/ "
+                         "alone, with no GPU and no dataset.")
     ap.add_argument("--history", required=True, help="history.csv from train_joint.py")
     ap.add_argument("--sweep", required=True, help="sweep_metrics.csv from train_classifier.py")
     ap.add_argument("--cm_dir", required=True, help="directory holding cm_r*.npy")
@@ -366,6 +373,8 @@ def main():
     ap.add_argument("--fft_denoise", action="store_true")
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
     ap.add_argument("--test_frac", type=float, default=0.2)
+    ap.add_argument("--split_by", choices=("crop", "source"), default="crop",
+                    help="must match the checkpoint's; see train_joint.py --split_by")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--n_show", type=int, default=4,
                     help="images per class in the comparison figure (columns = classes x this)")
@@ -377,13 +386,31 @@ def main():
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    assert_channels_match_data(args.data_root, args.channels)
-    ds = ClassFolderDataset(args.data_root, args.img_size, args.channels,
-                            args.fft_denoise, args.fft_cutoff)
-    classes = ds.classes
-    train_pool, _ = make_splits(ds.samples, args.test_frac, args.seed)
-    subset_idx = sample_named_subset(ds, parse_name_counts(args.subset), train_pool, args.seed)
-    real_counts = count_by_class(ds, subset_idx)
+    if bool(args.ckpt) != bool(args.data_root):
+        raise SystemExit(
+            "--ckpt and --data_root go together: the model-dependent figures need "
+            "both. Pass neither to write only the CSV-only figures.")
+    model_figures = bool(args.ckpt)
+
+    if model_figures:
+        assert_channels_match_data(args.data_root, args.channels)
+        ds = ClassFolderDataset(args.data_root, args.img_size, args.channels,
+                                args.fft_denoise, args.fft_cutoff)
+        classes = ds.classes
+        train_pool, _ = make_splits(ds.samples, args.test_frac, args.seed,
+                                    args.split_by)
+        subset_idx = sample_named_subset(ds, parse_name_counts(args.subset),
+                                         train_pool, args.seed)
+        real_counts = count_by_class(ds, subset_idx)
+    else:
+        # Without the dataset, --subset is the authority on both the class names
+        # and their counts. ClassFolderDataset labels classes by sorted directory
+        # name, so sorting the subset keys reproduces the same label order the
+        # confusion matrices were written with.
+        real_counts = parse_name_counts(args.subset)
+        classes = sorted(real_counts)
+        print(f"no --ckpt: writing the four figures that need no model, with "
+              f"classes {classes} taken from --subset")
     synthetic_counts = filling_rate_counts(real_counts, 1.0)
 
     # ---- class distribution (no model needed) ----
@@ -420,6 +447,9 @@ def main():
     print("wrote", out / "confusion_matrices.png")
 
     # ---- model-dependent figures ----
+    if not model_figures:
+        print("done (model-dependent figures skipped: no --ckpt)")
+        return
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=True)
     ckpt_classes = list(ckpt.get("classes") or [])
     if ckpt_classes != classes:
@@ -451,10 +481,11 @@ def main():
             f"--img_size {args.img_size} but checkpoint {args.ckpt} was trained "
             f"with img_size={ckpt['img_size']}; the loaded model would not match "
             f"the data pipeline")
+    g_norm = ckpt.get("g_norm", "batch")  # checkpoints predating --g_norm are batch
     enc = Encoder(ckpt["img_channels"], ckpt["num_classes"], ckpt["latent_dim"],
-                  ckpt["base_ch"], ckpt["img_size"]).to(device)
+                  ckpt["base_ch"], ckpt["img_size"], norm=g_norm).to(device)
     dec = Decoder(ckpt["img_channels"], ckpt["num_classes"], ckpt["latent_dim"],
-                  ckpt["base_ch"], ckpt["img_size"]).to(device)
+                  ckpt["base_ch"], ckpt["img_size"], norm=g_norm).to(device)
     enc.load_state_dict(ckpt["enc"]); dec.load_state_dict(ckpt["dec"])
     print(f"loaded checkpoint from best epoch {ckpt.get('best_epoch')}")
 

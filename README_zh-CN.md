@@ -188,13 +188,14 @@ python src/prepare_yolo_crops.py \
 
 `results/` 中的图。**每张图都属于某一次特定运行**，而且只有第一行能仅凭本仓库已提交的内容重画；其余需要生成器 checkpoint 或原始运行目录里的逐比例混淆矩阵，而那些目录被 gitignore（见[可复现性](#可复现性)）：
 
-| 图 | 由哪次运行产出 |
-|---|---|
-| `filling_rate_multiseed.png` | 上文三 seed GroupNorm + 加权采样扫描 |
-| `filling_rate_curve.png` | 已发布的 v0.2.0 单 seed 扫描（`runs/sweep`） |
-| `training_curves.png`、`reconstruction_comparison.png`、`latent_tsne.png` | 已发布的 v0.2.0 生成器（`runs/joint_lohi`） |
-| `confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png` | 已发布的 v0.2.0 扫描 |
-| `real_vs_generated.png`、`class_*.png` | 推荐的 `runs/paper2_gn_wrs` 生成器 |
+| 图 | 由哪次运行产出 | 能否在此重画 |
+|---|---|---|
+| `filling_rate_multiseed.png` | 上文三 seed GroupNorm + 加权采样扫描 | 能，仅凭 `results/metrics/` |
+| `filling_rate_curve.png` | 已发布的 v0.2.0 单 seed 扫描（`runs/sweep`） | 能，仅凭 `results/metrics/` |
+| `confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png` | 已发布的 v0.2.0 扫描 | 能，仅凭 `results/metrics/` |
+| `training_curves.png` | 已发布的 v0.2.0 生成器（`runs/joint_lohi`） | 能，仅凭 `results/metrics/` |
+| `reconstruction_comparison.png`、`latent_tsne.png` | 已发布的 v0.2.0 生成器（`runs/joint_lohi`） | 需要该 checkpoint |
+| `real_vs_generated.png`、`class_*.png` | 推荐的 `runs/paper2_gn_wrs` 生成器 | 需要该 checkpoint |
 
 第一行与最后一行的复现命令见 `docs/CALIBRATION.md` 第 9 节。这些图背后的原始指标导出（扫描与训练历史 CSV，以及逐比例混淆矩阵 `cm_r*.npy`）发布在 [`results/metrics/`](results/metrics/README.md) 下，每个运行名一个子目录，因此仅需 CSV 的那些图无需原始运行目录即可复现。
 
