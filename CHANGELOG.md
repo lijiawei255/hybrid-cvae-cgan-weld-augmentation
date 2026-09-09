@@ -208,6 +208,13 @@ defaults change.
 
 ## v0.4.0 - 2026-09-07
 
+> **Never tagged separately.** The repository's tags go v0.3.1 -> v0.4.1, and
+> the commit tagged `v0.4.1` is the one that carries the changes below, so
+> `git checkout v0.4.0` fails. Documents that say a default "became X in
+> v0.4.0" mean the release described here; the code state is at `v0.4.1`.
+> (Noted in v0.5.2; no tag was created after the fact, because there is no
+> commit that held only these changes.)
+
 Credibility and evaluation-infrastructure release. Published tables are
 unchanged; new defaults apply to *future* runs.
 
@@ -597,8 +604,12 @@ held-out real-only test set (full table in `README.md`):
   measured, with the likely cause (generator fidelity lower than the papers', so
   flooding dilutes the real signal) stated as a hypothesis, not a conclusion.
 - Generator diagnostics: FID 371 -> 216 by epoch 15 then plateau ~200;
-  reconstruction MSE 0.049-0.060 vs a 0.062 constant-mean baseline; early
-  stopping at epoch 25 of 70.
+  reconstruction MSE 0.049-0.060; early stopping at epoch 25 of 70.
+  (**Corrected in v0.5.2**: the constant-mean baseline was published here as
+  0.062. Remeasured on this run's own 800-image validation split it is 0.0556,
+  and the stricter per-image-mean anchor is 0.0339. The run's best validation
+  reconstruction is 0.0498, so it clears the first and not the second. The
+  reported reconstruction figures themselves are unchanged.)
 
 Single seed; differences under ~0.02 macro-F1 are within noise.
 
