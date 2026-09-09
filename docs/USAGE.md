@@ -66,6 +66,13 @@ And one that is neither paper's, because neither states a split protocol:
   repository has measured it, and every published checkpoint was trained with
   BatchNorm generators. A checkpoint records which it used, so `generate.py`
   rebuilds the right one automatically.
+- `--split_by source` needs each class to have crops from enough distinct source
+  frames. A class whose crops all come from one frame cannot appear on both
+  sides of a frame-level split at all, and one concentrated in a few large
+  frames can only be stratified to within a whole frame. The split raises with
+  the class named rather than returning a split where that class has no test or
+  no training images. On LoHi-WELD (8,012 crops from 1,022 frames) every class
+  lands within 19.4-21.7% at `--test_frac 0.2`.
 - `--adv_loss bce` with `--no_d_spectral_norm` is the conference paper's own
   adversarial objective. It is expressible so that the argument in
   [CALIBRATION.md](CALIBRATION.md) section 6 can be checked rather than taken on
