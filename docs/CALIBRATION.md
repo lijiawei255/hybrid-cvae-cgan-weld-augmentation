@@ -94,11 +94,23 @@ LoHi-WELD over full 70-epoch runs, `cvae_loss` logs `kl` as a mean over the batc
 *and* over latent dimensions, so the quantity comparable to the paper's is
 `latent_dim x kl` - the total latent information budget in nats:
 
-| run | latent dim | beta | `latent_dim x kl` |
-|---|---|---|---|
-| v0.2.0 published | 32 | 0.015 | 6.8 - 7.2 |
-| probe, latent 128 | 128 | 0.059 | 8.35 - 8.74 |
-| probe, latent 128, equal budget | 128 | 0.059 | 11.7 - 15.9 |
+Each range below is over that run's **final three epochs**; the window was not
+stated when these were first published, and it matters, because the same runs
+span 5.4 - 21.4 (v0.2.0) and 2.6 - 23.1 (equal budget) if taken over the whole
+run instead. Recomputed from the committed histories:
+
+| run | run directory | latent dim | beta | `latent_dim x kl`, last 3 epochs |
+|---|---|---|---|---|
+| v0.2.0 published | `runs/joint_lohi` (published) | 32 | 0.015 | 6.78 - 7.23 |
+| probe, latent 128 | `runs/probe_lat128_g0.1` (**unpublished probe**) | 128 | 0.059 | 8.35 - 8.74 |
+| probe, latent 128, equal budget | `runs/probe_eq_g0.1` (published) | 128 | 0.059 | 12.14 - 15.85 |
+
+The middle row's history is not in `results/metrics/`: it comes from a probe run
+that was never published, so that row cannot be checked from this repository and
+is marked accordingly. The third row was published as "11.7 - 15.9"; recomputing
+its last three epochs from the committed CSV gives 12.14 - 15.85, so its original
+window must have been slightly wider. Neither difference changes the conclusion
+below.
 
 Paper 1 reports "KL divergence stabilizes near 9.0 despite a high weighting
 (beta = 30.0)" at a 32-dimensional latent. That sentence admits two readings, and
@@ -254,12 +266,20 @@ against un-denoised real images and measure the preprocessing mismatch instead o
 generation quality.
 
 ROI extraction needs no re-implementation: both datasets already ship pre-cropped
-defect regions. Grayscale conversion is dataset-dependent. RIAWELC already
-satisfies it - every one of its 24,407 files is PIL mode `L`. LoHi-WELD does not:
-its files are mode `RGB`, so this repo trains on it with `--channels 3` and lets
-the first convolution learn the channel mixing rather than collapsing it
-upstream. Both are faithful to the paper's intent, which is a fixed input
-representation, not specifically one channel.
+defect regions.
+
+Grayscale conversion is a **declared step of the paper's method**, not an
+artefact of its camera: the conference paper states that its original RGB frames
+"were converted to grayscale to reduce redundancy and suppress irrelevant color
+variations". This repository does not follow it on LoHi-WELD, and that is a
+deviation rather than a neutral dataset detail. The reason is that LoHi-WELD's
+defect classes include `stain` and `discontinuity`, whose visible-light
+appearance carries colour information that a grayscale collapse discards, so
+`--channels 3` keeps it and lets the first convolution learn the mixing.
+`--channels 1` remains available and reproduces the paper's step. RIAWELC
+needed no such choice: every one of its 24,407 files is already PIL mode `L`.
+Earlier releases justified this here and in `CHANGELOG.md` by calling the papers'
+grayscale "a property of their camera"; that reading is withdrawn as wrong.
 
 ## 4. Resolution: paper's 400x400 -> 224x224
 
@@ -386,8 +406,19 @@ construction: spectral normalisation caps each weight matrix's spectral norm at
 The conference paper's **Sub-Pixel (PixelShuffle) decoder** replaces the transposed
 convolution that produced the checkerboard artefact.
 
-Both are the original authors' own designs, so this keeps the reproduction inside
-the papers rather than importing outside machinery. Pinned by
+Both are components the papers themselves specify, so this keeps the
+reproduction inside their design space rather than importing outside machinery.
+Neither technique originates with them: spectral normalisation is Miyato et al.
+(2018) and Sub-Pixel convolution is Shi et al. (2016), both cited in
+`CITATION.cff`.
+
+**Spectral-norm scope is a deviation.** The journal extension applies spectral
+normalisation to the discriminator's first three convolutional blocks; this repo
+applies it to all four plus the dense head. Bounding more layers can only tighten
+the Lipschitz bound the argument above relies on, so it is conservative in the
+direction that matters, but it is not what the paper specifies and the difference
+has not been measured. `--no_d_spectral_norm` removes it entirely, which together
+with `--adv_loss bce` is the conference paper's original objective. Pinned by
 `check_hinge_losses_and_bounded_score` in `src/smoke_test.py`, which asserts the
 hinge arithmetic and that a saturated discriminator still emits a bounded score.
 
@@ -499,7 +530,18 @@ The journal extension reports **96.79%** downstream accuracy against a **89.46%*
 vanilla CVAE-GAN baseline and calls it "+7.33% over the Vanilla baseline". That
 gain is not produced by the CVAE-CGAN architecture this repo reproduces. It is
 produced by two physics-informed losses, `L_bound` and `L_therm`, and the paper's
-own ablation (its Fig. 15(a)) shows this directly:
+own ablation (its Fig. 15(a)) shows this directly.
+
+> The six accuracy values in the table below are taken from Fig. 15(a) of Yang
+> et al., "Physics-guided generative data augmentation for vision-based signal
+> processing under class-imbalanced conditions in directed energy deposition
+> monitoring system", *Mechanical Systems and Signal Processing* **250** (2026)
+> 114138, [doi:10.1016/j.ymssp.2026.114138](https://doi.org/10.1016/j.ymssp.2026.114138),
+> which is open access under
+> [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). They are reproduced
+> here under that licence, with attribution, because the argument of this section
+> cannot be made without them. They are the **authors' own results on their own
+> proprietary data**, not results of this repository.
 
 | variant | accuracy |
 |---|---|
@@ -730,6 +772,43 @@ retained in the published CSV under `results/metrics/sweep_paper2_s42/`.
    section 8: a from-scratch ResNet-18 over single images, not an LSTM/GRU over
    21-frame sequences.
 
+### The published v0.2.0 runs
+
+`runs/joint_lohi` and `runs/sweep` back the README single-seed table and four of
+its six figure rows, and their command lines were never written down. Both are
+recovered below from the configuration stored inside `runs/joint_lohi/joint.pt`
+(latent 32, `base_ch` 64, `kl_weight` 0.015, `perc_weight` 0.1, `adv_weight` 0.1,
+224 px, 3 channels, seed 42, best epoch 15) plus the flags this run own
+`history.csv` implies - 25 epochs of a 70-epoch budget under the default
+patience 10, and an FID value on every epoch.
+
+```bash
+# The v0.2.0 generator. Everything not written out is a default of that release:
+# --patience 10 --lr_patience 5 --fid_every 1 are what stop it at epoch 25.
+python src/train_joint.py --data_root data/lohi \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
+  --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 32 \
+  --kl_weight 0.015 --perc_weight 0.1 --adv_weight 0.1 \
+  --fid_backend legacy --out_dir runs/joint_lohi
+
+python src/generate.py --ckpt runs/joint_lohi/joint.pt --seed 42 \
+  --out_root generated \
+  --counts "deposit=450,discontinuity=300,pore=560,stain=300"
+
+# The v0.2.0 sweep. --selection did not exist yet; its behaviour is what
+# --selection final now reproduces.
+python src/train_classifier.py --data_root data/lohi --gen_root generated \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --channels 3 --selection final --out_dir runs/sweep
+```
+
+Two caveats on these two commands specifically. The generator predates the
+`test_frac` and `monitor` keys being stored in the checkpoint, so those are
+inferred from that release defaults rather than read back. And the `generated`
+pool holds `stain=300`, unlike every later balance-to-max pool, which is why its
+`meta.json` records no `test_frac` and why it is the one pool whose split
+configuration cannot be fully checked.
+
 ### Split-overlap measurement: crop-level, not source-isolated
 
 Read-only audit of the published splits (added in v0.5.1). Source identity is
@@ -752,7 +831,21 @@ nothing in the split groups by source frame:
 The split therefore guarantees crop-index disjointness only. Absolute
 downstream numbers are optimistic about unseen sources; the filling-rate arms
 share the test set and the baseline subset, so within-run comparisons are less
-affected. A source-frame-grouped split is the experiment a fork should run.
+affected.
+
+**Reproduce.** `src/measure_split_overlap.py` re-derives the splits with the same
+`make_splits` / `sample_named_subset` calls the training scripts make, and prints
+the table above. It opens no images and needs no GPU or checkpoint.
+
+```bash
+python src/measure_split_overlap.py --data_root data/lohi \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" --seeds 42,43,44
+```
+
+A source-frame-grouped split is no longer only an experiment a fork should run:
+`--split_by source` implements it, the same script verifies that it reports 0% on
+every column above, and section 11 reports what the downstream numbers do under
+it.
 
 ### KL annealing: implemented, tested, deliberately not trained
 
@@ -941,19 +1034,25 @@ that the classifier never calls.
 ### Cause 1: no deterministic algorithms
 
 `train_classifier.py` seeds `random`, `numpy` and `torch` at the top of each
-ratio's loop, but never calls `torch.use_deterministic_algorithms(True)` or sets
-`cudnn.deterministic`. On CUDA the convolution backward passes use atomic-add
-kernels whose accumulation order is not fixed, so identical seed, data and code
-still diverge from the first step. The loss curves confirm it: epoch 10 was
+ratio's loop. When the published runs were made it did nothing further, so on
+CUDA the convolution backward passes used atomic-add kernels whose accumulation
+order is not fixed, and identical seed, data and code still diverged from the
+first step. (Since v0.4.0 the script has a `--deterministic` flag that sets
+`cudnn.deterministic` and disables `cudnn.benchmark`. It was not used for any
+published run, and it is not a guarantee either: `torch.use_deterministic_
+algorithms(True)` is still called nowhere in this repository. `train_joint.py`
+has no equivalent flag at all, so generator runs cannot opt in.) The loss curves confirm it: epoch 10 was
 0.4266 in the published run and 0.4008 in the repeat.
 
 **The measured spread is the noise floor for this benchmark.** On 61 pore test
 images, one repeat of an unchanged configuration moved pore F1 by **0.034** and
 macro-F1 by **0.009**. Any single-seed difference smaller than that is not
-evidence, in either direction. The README's caveat ("treat differences under
-~0.02 macro-F1 as noise") is in the right ballpark for macro-F1 but too
-optimistic for the minority class, where 61 test images make F1 granular: one
-image is worth ~0.016 of pore recall on its own.
+evidence, in either direction. That is granular because the minority class has
+only 61 test images: one image is worth ~0.016 of pore recall on its own. These
+two figures are now quoted in `README.md` beside the filling-rate table, which
+is where a reader meets the per-ratio differences they bound. (Earlier releases
+of this file attributed a "treat differences under ~0.02 macro-F1 as noise"
+caveat to the README; no such sentence was ever in it.)
 
 The generator side has its own reproduction caveat: `compute_fid` and
 `save_sample_grid` draw from the same default RNG stream as training, so
@@ -963,9 +1062,13 @@ reproduction therefore keeps the diagnostic settings identical too.
 
 ### Cause 2: the final epoch is what gets scored
 
-`train_one` runs a constant Adam learning rate for the full `--epochs` with no
-schedule, no early stopping and no checkpointing; `evaluate` is then called on
-whatever weights remain. There is no best-epoch selection anywhere in the file.
+When the published tables were produced, `train_one` ran a constant Adam
+learning rate for the full `--epochs` with no schedule, no early stopping and no
+checkpointing, and `evaluate` was then called on whatever weights remained;
+there was no best-epoch selection anywhere in the file. `--selection final`
+still reproduces exactly that. Since v0.4.0 the default is `--selection
+best_val`, which keeps and restores the lowest-loss epoch measured on the
+real-only leftover pool.
 
 This matters because the loss can spike late. In the section 9 sweep the `r=0.25`
 arm sat at 0.0001 by epoch 90 and then reported **0.2617 at epoch 100** - three
@@ -980,8 +1083,10 @@ comparability with the tagged v0.2.0 numbers: selecting a best epoch, or forcing
 deterministic algorithms, changes what every previously published row means. The
 honest position is that this repo's downstream numbers carry a run-to-run
 uncertainty of roughly +/-0.03 pore F1 at fixed seed, and that a single ratio
-arm can be invalidated outright by a late spike. Averaging over seeds (task 28)
-reduces the first problem; only a protocol change would reduce the second.
+arm can be invalidated outright by a late spike. Averaging over seeds reduces the
+first problem; only a protocol change would reduce the second, and section 11
+reports what happened when the published sweeps were rescored under
+`--selection best_val`.
 
 **Reproduce the noise floor.** Run the `r=0` arm twice and compare; no code
 change is needed to see it.

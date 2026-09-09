@@ -114,7 +114,12 @@ class ClassFolderDataset(Dataset):
                               if p.is_dir() and not p.name.startswith("."))
         self.samples = []
         for idx, cname in enumerate(self.classes):
-            for fp in sorted((self.root / cname).glob("*")):
+            # Sort by name, not by Path object: Path comparison is
+            # case-insensitive on Windows and case-sensitive on POSIX, so a
+            # tree with any uppercase filename would otherwise be ordered
+            # differently on the two platforms - and this order is what the
+            # seeded split indexes into.
+            for fp in sorted((self.root / cname).glob("*"), key=lambda q: q.name):
                 if fp.suffix.lower() in IMG_EXTENSIONS:
                     self.samples.append((fp, idx))
 

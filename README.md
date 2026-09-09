@@ -107,15 +107,28 @@ public data.
 DR/MDR. LoHi-WELD has no non-defect class, so DR/MDR are undefined here.
 
 **Not fully reproduced.** Journal physics-guided losses; 21-frame temporal
-augmentation and LSTM/GRU classifiers; paper residual encoder body; FFT
-denoising is implemented but off by default.
+augmentation and LSTM/GRU classifiers; paper residual encoder body; the
+journal's Charbonnier reconstruction loss, Tanh decoder, projection
+discriminator and free-bits KL; its 32-to-256 encoder widths; FFT denoising is
+implemented but off by default. GroupNorm is available on every network via
+`--d_norm` and `--g_norm` but only the discriminator's setting has been
+measured. The full itemised list, including the choices this repo made where
+the papers are ambiguous, is in
+[`docs/USAGE.md`](docs/USAGE.md#what-this-repo-deliberately-does-not-reproduce).
 
 ## Disclaimer
 
 - This repository is an **independent re-implementation based solely on the published paper**. It is **not affiliated with, endorsed by, or connected to the original authors or their institutions**.
 - The original authors' WAAM dataset is proprietary and **was not used, accessed, or requested**.
 - All experiments here run on **publicly available, openly licensed datasets**. Each dataset's own license applies.
-- No figures, tables, or text from the paper are reproduced here.
+- No **imagery** from the papers, and none of their proprietary data, is
+  reproduced or claimed here. The journal extension is open access under
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), and
+  [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 8 quotes its Fig. 15(a)
+  ablation figures under that licence, with attribution, in order to explain
+  which part of its headline result this repository does not reproduce.
+  Short attributed quotations from the conference paper appear for the same
+  reason.
 - This project re-implements a *method*. It does **not** claim to reproduce the papers' experimental results or reported numbers.
 
 ## Quickstart
@@ -136,10 +149,15 @@ pip install -r requirements.txt
 python src/smoke_test.py
 
 # Train the joint model (recommended LoHi-WELD configuration).
+# --patience/--lr_patience 70 hold early stopping and LR decay off for the
+# full 70 epochs, which is how the measured arm ran. At the defaults (10
+# and 5) this run stops near epoch 32 and is a different generator.
 python src/train_joint.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
   --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
-  --kl_weight 0.059 --d_norm group --weighted_sampler \
+  --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
+  --patience 70 --lr_patience 70 --d_norm group --weighted_sampler \
+  --fid_every 5 --sample_every 10 \
   --out_dir runs/joint_lohi_recommended
 
 # Generate the balance-to-max pool.
@@ -147,13 +165,18 @@ python src/generate.py --ckpt runs/joint_lohi_recommended/joint.pt \
   --counts "pore=560,deposit=450,discontinuity=300,stain=0" --out_root generated
 
 # Downstream sweep: one from-scratch classifier per filling rate.
+# --selection final is the protocol behind every published table below;
+# the current default, best_val, scores a different epoch.
 python src/train_classifier.py --data_root data/lohi --gen_root generated \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
-  --ratios "0.0,0.25,0.5,0.75,1.0" --channels 3 --epochs 100 --out_dir runs/sweep
+  --ratios "0.0,0.25,0.5,0.75,1.0" --channels 3 --epochs 100 \
+  --selection final --out_dir runs/sweep
 
-# Paper-style figures.
+# Paper-style figures, from the two runs above. The committed figures come
+# from the published runs instead - see the provenance table below.
 python src/make_paper_figures.py --data_root data/lohi \
-  --ckpt runs/joint_lohi/joint.pt --history runs/joint_lohi/history.csv \
+  --ckpt runs/joint_lohi_recommended/joint.pt \
+  --history runs/joint_lohi_recommended/history.csv \
   --sweep runs/sweep/sweep_metrics.csv --cm_dir runs/sweep \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
   --out_dir results
@@ -203,9 +226,16 @@ result.
 Single seed (42). Generator: joint CVAE-CGAN on the paper-scale subset
 (pore 40 / deposit 150 / discontinuity 300 / stain 600), 70 epochs with early
 stopping at 25 (best epoch 15). Diagnostics: FID fell 371 -> 216 and plateaued
-near 200 (diagnostic only, not comparable to any published FID); reconstruction
-MSE 0.049-0.060 against a constant-mean baseline of 0.062; sample grids show
-clear per-class morphology.
+near 200 (diagnostic only, not comparable to any published FID); sample grids
+show clear per-class morphology. At its best epoch this generator reaches
+validation reconstruction MSE 0.0498 (training 0.0592) against the two trivial
+predictors measured on its own 800-image validation split: a constant global
+mean scores 0.0556 and each image's own mean scores 0.0339. So it beats the
+constant-mean floor and does **not** reach the per-image-mean anchor, and only
+6 of its 25 epochs are below the constant-mean floor at all. Earlier releases
+quoted a 0.062 constant-mean baseline here; that value is corrected, and the
+0.0556 / 0.0339 pair in [`docs/CALIBRATION.md`](docs/CALIBRATION.md) sections 6
+and 9 is the right one.
 
 **Filling-rate sweep** - one from-scratch ResNet-18 per ratio, 100 epochs each,
 all evaluated on the same held-out real-only test set (1,603 images; the split
@@ -219,6 +249,14 @@ the train pool, see the [limitations](docs/USAGE.md#limitations)):
 | 0.50 | 0.8178 | 0.6767 | 0.8078 | 0.6108 | 0.9097 | 0.3590 | 0.8273 |
 | 0.75 | 0.8141 | 0.7029 | 0.8064 | 0.5957 | 0.8977 | **0.4902** | 0.8281 |
 | 1.00 (balance-to-max) | 0.7392 | 0.6418 | 0.7403 | 0.6199 | 0.7932 | 0.3871 | 0.7669 |
+
+Both tables in this section were scored with `--selection final` and their FID
+figures with `--fid_backend legacy`; today's defaults are `best_val` and
+`pytorch_fid`, which are different protocols and different scales. **Repeating
+an unchanged arm at the same seed moves pore F1 by 0.034 and macro-F1 by 0.009**
+(measured, [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 10), so read any
+single per-ratio difference smaller than that as noise - including the +0.009
+macro-F1 at r=0.75 below.
 
 Two findings, reported as measured:
 
@@ -241,7 +279,10 @@ Two findings, reported as measured:
 > sign flip. Full tables, the split-overlap measurement and limitations:
 > [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 9.
 
-Figures in `results/`. **Each one belongs to a specific run**:
+Figures in `results/`. **Each one belongs to a specific run**, and only the
+first row is regenerable from what this repository ships - the rest need a
+generator checkpoint or per-ratio confusion matrices from the original run
+directories, which are git-ignored (see [Reproducibility](#reproducibility)):
 
 | figure | run it was produced from |
 |---|---|
@@ -254,8 +295,25 @@ Figures in `results/`. **Each one belongs to a specific run**:
 Reproduce commands for the first and last rows: `docs/CALIBRATION.md` section 9.
 The raw metric exports behind these figures (sweep and training-history CSVs)
 are published under [`results/metrics/`](results/metrics/README.md), one
-subdirectory per run name, so those figure commands reproduce without the
+subdirectory per run name, so the CSV-only figures reproduce without the
 original run directories.
+
+### Reproducibility
+
+What ships in this repository, and what does not:
+
+| artefact | shipped? | what it means for you |
+|---|---|---|
+| every metric behind every published number | yes, `results/metrics/` | the tables can be checked without a GPU |
+| per-ratio confusion matrices (`cm_r*.npy`) | yes, `results/metrics/` | `confusion_matrices.png` redraws without retraining |
+| generator checkpoints (`joint.pt`) | no, too large for git | published as assets on the Zenodo record; otherwise retrain |
+| generated image pools | no | regenerate from a checkpoint with `src/generate.py` |
+| LoHi-WELD itself | no | download it and run `src/prepare_yolo_crops.py` |
+
+Exact environment: `requirements.txt` gives the supported ranges and
+`requirements-lock.txt` pins the versions these results were produced with.
+GPU results are not bit-reproducible even at a fixed seed
+([`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 10).
 
 ![Seed-aggregated filling-rate curve](results/filling_rate_multiseed.png)
 
