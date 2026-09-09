@@ -1,11 +1,18 @@
 # Tested on Python 3.11 (the version CI runs); other versions are untested.
-torch>=2.2
-torchvision>=0.17
-numpy
-Pillow
-scipy
-matplotlib
-scikit-learn
-pyyaml
-pytorch-fid>=0.3.0
-
+# Upper bounds are deliberate: this is a frozen reference implementation, so a
+# future major release of any of these should be an explicit decision rather
+# than something a fresh install picks up silently. The exact versions the
+# published results came from are in requirements-lock.txt.
+#
+# Install order matters. pytorch-fid depends on torch, so installing it in the
+# same resolution step can replace a CUDA build with a CPU one; install it last
+# with --no-deps (see requirements-lock.txt).
+torch>=2.2,<3
+torchvision>=0.17,<1
+numpy>=1.24,<3
+Pillow>=10,<14
+scipy>=1.10,<2
+matplotlib>=3.7,<4
+scikit-learn>=1.3,<2
+pyyaml>=6,<7
+pytorch-fid>=0.3.0,<0.4

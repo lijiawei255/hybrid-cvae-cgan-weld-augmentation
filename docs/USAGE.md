@@ -32,8 +32,23 @@ behaviour.
 |---|---|---|---|
 | `--d_norm` | `batch` | `group` | measured, recommended |
 | `--weighted_sampler` | off | on | measured, recommended |
+| `--g_norm` | `batch` | `group` | expressible, **not measured** |
 | `--kl_warmup` | off (constant beta) | `10,50` | implemented and unit-tested, **not training-validated** |
 | `--monitor` | `val_loss` | - | only needed together with `--kl_warmup` |
+
+Two further switches exist for the **conference** paper's original objective,
+which the default configuration replaces:
+
+| switch | default | conference-paper value | status |
+|---|---|---|---|
+| `--adv_loss` | `hinge` | `bce` | expressible, **measured to fail here** |
+| `--no_d_spectral_norm` | off (SN on) | on (no SN) | expressible, **measured to fail here** |
+
+And one that is neither paper's, because neither states a split protocol:
+
+| switch | default | status |
+|---|---|---|
+| `--split_by` | `crop` (the published protocol) | `source` isolates source frames; see the limitations below |
 
 - `--d_norm group` replaces the discriminator's BatchNorm with GroupNorm. At
   `--batch_size 8` BatchNorm makes a sample's score depend on its seven batch
@@ -45,6 +60,18 @@ behaviour.
 - `--kl_warmup ZERO,RAMP` needs the journal paper's 200-epoch protocol; it is
   deliberately not trained inside a 70-epoch run.
 - `--monitor val_recon` is required under `--kl_warmup`.
+- `--g_norm group` puts GroupNorm in the encoder and decoder too. The journal
+  paper's Table 3 specifies GroupNorm for every network, so full fidelity to it
+  needs this as well as `--d_norm group`. Unlike `--d_norm`, no run in this
+  repository has measured it, and every published checkpoint was trained with
+  BatchNorm generators. A checkpoint records which it used, so `generate.py`
+  rebuilds the right one automatically.
+- `--adv_loss bce` with `--no_d_spectral_norm` is the conference paper's own
+  adversarial objective. It is expressible so that the argument in
+  [CALIBRATION.md](CALIBRATION.md) section 6 can be checked rather than taken on
+  trust: BCE's generator term is unbounded above, and at this data scale a
+  confident discriminator drove it to roughly 50x the reconstruction term while
+  FID rose. Expect it to fail; that is the point of being able to run it.
 
 Enabling `--d_norm group --weighted_sampler` is the configuration in
 [CALIBRATION.md](CALIBRATION.md) section 9. Read the four things that
@@ -137,9 +164,21 @@ glance" is the short form.
   are therefore optimistic about generalisation to unseen sources; the
   filling-rate arms share the same test set and baseline subset, so
   within-run comparisons are less affected. Nothing here evidences
-  weld-level generalisation - grouping the split by source frame is the
-  experiment to run in a fork. "Source frame" is one LoHi-WELD original
-  image; grouping by weld would be coarser still.
+  weld-level generalisation. `--split_by source` now implements the
+  source-frame-grouped split on both `train_joint.py` and
+  `train_classifier.py`, and `src/measure_split_overlap.py` verifies that it
+  brings every overlap column to 0%; CALIBRATION section 11 reports what the
+  downstream numbers do under it. "Source frame" is one LoHi-WELD original
+  image; grouping by weld would be coarser still. A generated pool records its
+  own `split_by`, and a sweep refuses a pool whose value disagrees with its own.
+- **`--selection best_val` selects on a pool the generator also saw.** The
+  classifier's leftover validation pool is every train-pool image outside
+  `--subset`, and the generator's own validation and FID reference set (200 per
+  class) is drawn from that same leftover. So under the current default the
+  classifier picks its reported epoch using images the generator was early
+  stopped on. The held-out test set is untouched, so this is not test leakage,
+  but it is a soft optimistic bias that the published `--selection final`
+  tables do not carry.
 - **Diagnostic frequency is part of the training configuration.** FID checks
   and sample grids draw from the same RNG stream as training, so changing
   `--fid_every` or `--sample_every` changes the subsequent training random
@@ -156,5 +195,29 @@ glance" is the short form.
   spectral normalisation on top).
 - Journal free-bits KL form, Eq. 9 `max(0, KL - delta)` (plain KL with an
   optional beta ramp instead; the paper does not give `delta`).
-- Paper residual encoder conv body (plain 4x4 stride-2; drop-in replaceable).
+- Journal Charbonnier reconstruction loss (Eq. 6, weight 3.0) and its Tanh
+  decoder over [-1, 1] inputs; this repo follows the conference paper's MSE and
+  sigmoid over [0, 1].
+- Journal encoder channel widths (32-64-128-256); this repo uses 64-128-256-512
+  via `--base_ch 64`.
+- Paper residual encoder conv body (plain 4x4 stride-2; drop-in replaceable),
+  and the encoder's flatten into the latent heads, replaced by global average
+  pooling as a measured stability fix (CALIBRATION section 7, bug 1).
+- Spectral normalisation on the first three conv blocks only; this repo
+  normalises all four plus the dense head.
+- The perceptual loss as a weighted sum over several VGG19 layers (Eq. 7); this
+  repo distances the single final `features` output. Neither paper names the
+  layers individually.
+- The papers' grayscale preprocessing, on the primary runs (`--channels 3`;
+  `--channels 1` reproduces it).
 - DR/MDR (undefined on LoHi-WELD: no non-defect class).
+
+Choices this repo had to make because the papers do not specify them, listed so
+they are not mistaken for reproduction: the classifier's hyperparameters (batch
+32, 100 epochs, Adam 1e-3, no input normalisation and no classifier-side
+augmentation); the train/validation/test proportions; the filling-rate grid
+`0.0,0.25,0.5,0.75,1.0`, which does **not** sample the 0.1-0.2 region the journal
+extension reports as degrading; the GroupNorm group count (32); and that the
+adversarial term is taken on fresh prior samples only, never on reconstructions.
+The journal's "traditional augmentation" baseline arm is also not implemented,
+though unlike the physics losses nothing prevents it.

@@ -1,0 +1,23 @@
+# Exact versions the published results in this repository were produced with,
+# on Python 3.11.16 / CUDA 12.8 / NVIDIA RTX 4000 Ada Laptop GPU (12 GB), Windows.
+#
+# requirements.txt is the supported range; this file is the one point in time.
+# GPU results are not bit-reproducible even at a fixed seed and a fixed
+# environment (docs/CALIBRATION.md section 10), so this pins the software
+# stack, not the numbers.
+#
+# The torch wheels carry a +cu128 local version tag and come from the PyTorch
+# index, not PyPI:
+#   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+# Install pytorch-fid last and with --no-deps, so its own torch requirement
+# cannot pull a different build over the one just installed:
+#   pip install --no-deps pytorch-fid==0.3.0
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+numpy==2.4.6
+pillow==12.3.0
+scipy==1.17.1
+matplotlib==3.11.1
+scikit-learn==1.9.0
+PyYAML==6.0.3
+pytorch-fid==0.3.0

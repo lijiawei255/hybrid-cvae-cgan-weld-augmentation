@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: smoke-${{ github.ref }}
   cancel-in-progress: true
@@ -19,7 +22,12 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # pytorch-fid is installed last with --no-deps so its own torch
+        # requirement cannot replace the build resolved on the line above.
+        # This mirrors the documented local procedure in requirements-lock.txt.
+        run: |
+          pip install $(grep -v '^#' requirements.txt | grep -v '^pytorch-fid' | tr '\n' ' ')
+          pip install --no-deps 'pytorch-fid>=0.3.0,<0.4'
       - name: Cache pretrained weights (VGG19, InceptionV3)
         uses: actions/cache@v4
         with:

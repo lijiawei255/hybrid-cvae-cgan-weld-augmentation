@@ -1,8 +1,10 @@
 # Changelog
 
-Deliberate deviations from the reference skeleton shipped in the reproduction
-guide (its Appendix A), and from the papers themselves, are recorded here with
-the reason for each.
+Deliberate deviations from the two papers this repository re-implements are
+recorded here with the reason for each. Entries up to v0.2.0 also refer to an
+earlier in-house skeleton that predates the papers being read; it was never
+published, and every one of its choices that survived is stated here in its own
+right rather than by reference to it.
 
 Measurements behind the four calibrated hyperparameters - the KL weight, the
 discriminator learning rate, the FFT denoising step and the resolution - live in
@@ -416,9 +418,11 @@ doc accuracy fixes from a post-release audit.
   possible 65,025. It mostly smooths the *target*, so any apparent gain must be
   read as "the task got easier", not "the method got stronger"
   (`docs/CALIBRATION.md` section 3).
-- **The README's noise caveat was a guess.** "Treat differences under ~0.02
-  macro-F1 as noise" is replaced with the measured spread from repeating an
-  unchanged arm at the same seed: pore F1 moved 0.034, macro-F1 0.009.
+- **The noise caveat is now measured rather than guessed.** Repeating an
+  unchanged arm at the same seed moved pore F1 by 0.034 and macro-F1 by 0.009.
+  (This entry originally described the replaced text as a README caveat reading
+  "treat differences under ~0.02 macro-F1 as noise"; no such sentence was ever
+  in either README. Corrected in v0.5.2.)
 - **README prep command could not produce the advertised crops.** Both READMEs'
   Data sections pointed `--input_root` at the archive root, which also contains
   the 2,000 low-resolution beads; the documented 8,012 crops come from
@@ -496,9 +500,12 @@ v0.1.0 results at the foot of this file are superseded.
   64 -> 8. **Epochs** 100 + 200 -> 70 joint. **Learning rate** 2e-4 / 1e-4 / 4e-4
   -> 1e-3. **Adam betas** (0.5, 0.999) -> defaults.
 - **Channels and range.** RGB in [-1, 1] with a Tanh decoder -> **[0, 1] with a
-  sigmoid decoder**, 1 or 3 channels. The primary LoHi-WELD experiment runs at 3
-  channels because colour carries defect signal there; the papers' grayscale was
-  a property of their melt-pool camera, not of the method.
+  sigmoid decoder**, 1 or 3 channels, following the conference paper. (The
+  journal extension specifies Tanh and [-1, 1] instead; this repo follows the
+  conference paper on both.) The primary LoHi-WELD experiment runs at 3 channels
+  because colour carries defect signal there. Both papers convert to grayscale
+  as a declared preprocessing step, so running at 3 channels is a deviation
+  rather than a neutral dataset detail; `--channels 1` reproduces the step.
 - **Schedule.** Added early stopping (patience 10) and `ReduceLROnPlateau`
   (factor 0.2, patience 5), both described by the paper and previously absent.
 - **GAN objective.** BCE minimax with label smoothing (real = 0.9) replaced by the
@@ -727,25 +734,26 @@ reflects the state after the 2026-09-06 owner decisions.
 | Framework | TensorFlow 2.18 / Keras 3.9 | same lineage | PyTorch | deliberate (guide's design) |
 | Training structure | single phase, combined loss, G and D alternated per minibatch | same lineage | single phase, combined loss, alternated per minibatch | **aligned** |
 | Image size | 400x400 grayscale | 400x400 grayscale | 224x224; primary LoHi-WELD runs are RGB | calibrated (source boxes are much smaller; see CALIBRATION.md §4) |
-| Channels | 1 (grayscale melt-pool camera) | 1 | 1 or 3; primary runs at 3 | dataset-driven: colour carries defect signal in LoHi-WELD; the papers' grayscale is their sensor's property, not a method requirement |
-| Decoder output | sigmoid, [0, 1] | n/a | sigmoid, [0, 1] | **aligned** |
+| Channels | 1; the paper states RGB frames "were converted to grayscale to reduce redundancy and suppress irrelevant color variations" | 1 | 1 or 3; primary runs at 3 | **deviates**: grayscale is a declared preprocessing step of the method, not a camera property. LoHi-WELD's stain and discontinuity classes carry colour signal, so the primary runs keep RGB; `--channels 1` reproduces the paper's step |
+| Decoder output | sigmoid, [0, 1] | **Tanh, [-1, 1]** (inputs normalised to match) | sigmoid, [0, 1] | aligned with the conference paper; **deviates** from the journal extension |
 | Preprocessing | ROI extraction, grayscale, FFT circular low-pass | same | LoHi-WELD ROI via prepare_yolo_crops.py; FFT implemented, off | calibrated (measured band-limited) |
-| Encoder body | 3x3 convs, residual connections, max pooling, 1x1 channel reduction | residual blocks, Group Normalization | 4 DCGAN-style 4x4 stride-2 convs + BatchNorm, then 1x1 reduction + global average pooling | partial: aggregation aligned, conv body deviation kept |
-| Discriminator head | global max pooling + dense + dropout | GAP -> 512-d + projection | global max pooling + single dense | partial: pooling aligned, dropout omitted |
+| Encoder body | 3x3 convs, residual connections, max pooling, 1x1 channel reduction, then **flattening** into the dense heads | residual blocks, Group Normalization, widths 32-64-128-256 | 4 DCGAN-style 4x4 stride-2 convs + BatchNorm (`--g_norm group` available), then 1x1 reduction + **global average pooling**; widths 64-128-256-512 | **deviates**: the 1x1 reduction is the paper's, the pooling replaces its flatten (a measured stability fix, docs/CALIBRATION.md section 7 bug 1), the conv body and the channel widths are ours |
+| Discriminator head | global max pooling + dense layers + dropout | GAP -> 512-d + projection discriminator (Eq. 4) | global max pooling + single dense, no dropout | partial: pooling aligned; dropout omitted, projection not implemented |
 | Decoder upsampling | Sub-Pixel Convolution (2 stages) | progressive | 4 PixelShuffle stages | **aligned with the conference paper** |
+| Normalisation | BatchNorm | **GroupNorm in every network** (Table 3) | selectable per side: `--d_norm` (measured, recommended `group`) and `--g_norm` (added v0.5.2, **not measured**); both default to `batch` | expressible everywhere; only the discriminator's setting has evidence behind it |
 | Latent dim | 32 | 128 | 32 default (conference); recommended LoHi-WELD uses 128 | both values are expressible |
-| Reconstruction loss | MSE | weighted (3.0) | MSE | **aligned** |
+| Reconstruction loss | MSE | **Charbonnier**, weight 3.0 | MSE, weight 1.0 | aligned with the conference paper; **deviates** from the journal extension, whose Charbonnier term behaves like L1 on bright outliers |
 | KL weight | beta = 30 | annealed 0 -> 0.5 | 0.015 at latent 32; 0.059 at latent 128 | calibrated; equivalent under this repo's normalisation |
-| Perceptual loss | VGG19, weight 0.1 | VGG19, weight 0.02 | frozen VGG19, weight 0.1 | **aligned** |
+| Perceptual loss | VGG19, weight 0.1; Eq. 7 is a **weighted sum over several layers** | VGG19, weight 0.02, over **intermediate** activations | frozen VGG19, weight 0.1, MSE on the **single final** `features` output | weight aligned with the conference paper; **deviates** on layer selection, which neither paper names individually |
 | Adversarial weight | gamma = 1 | n/a | 0.1 | calibrated: at 1.0 under this repo's mean-normalised losses the adversarial term outweighs reconstruction ~20:1 and reconstruction never converges (docs/CALIBRATION.md) |
-| GAN objective | BCE minimax | hinge + projection discriminator + spectral norm | hinge + spectral norm | **aligned with the journal extension** (see below) |
+| GAN objective | BCE minimax | hinge + projection discriminator + spectral norm on the **first three** conv blocks | hinge + spectral norm on **all four** conv blocks and the dense head; `--adv_loss bce` and `--no_d_spectral_norm` express the conference configuration | aligned with the journal extension on the objective; **deviates** on SN scope (docs/CALIBRATION.md section 6) |
 | Label conditioning | label embedded as a spatial map concatenated with the image (E and D); decoder concatenates a class embedding with z | same design | same design | matches |
 | G:D update ratio | alternated within each minibatch | 1:1 | alternated within each minibatch, separate backward passes | **aligned** |
 | Generator lr | Adam 1e-3 | Adam beta1=0, lr 2e-4 | Adam 1e-3, default betas | **aligned with the conference paper** |
 | Discriminator lr | same 1e-3 | same 2e-4 | 1e-3 | **aligned**: hinge + spectral normalisation keep D in equilibrium at the paper's own rate; the 4e-4 probe value in docs/CALIBRATION.md belongs to the superseded BCE objective |
 | Batch size | 8 | 16 | 8 | **aligned** |
 | Epochs | 70 | 200 | 70 | **aligned** |
-| Early stopping / LR schedule | patience 10; ReduceLROnPlateau factor 0.2 patience 5 | n/a | same | **aligned** |
+| Early stopping / LR schedule | patience 10; ReduceLROnPlateau factor 0.2 patience 5 | n/a | same defaults | **aligned** as defaults, but the recommended arm and every seed of the three-seed table ran `--patience 70 --lr_patience 70`, i.e. both disabled for the full 70 epochs (docs/CALIBRATION.md section 9) |
 | FID | every epoch, vs real validation samples, InceptionV3 average pooling | same | every epoch, vs a real validation set; default backend pytorch-fid (TF Inception weights); `--fid_backend legacy` for published in-repo numbers | protocol aligned; feature weights are an evaluation-infrastructure choice |
 | Augmentation strategy | balance all classes to 600 | balance-to-max to N_max, filling-rate sensitivity sweep | balance-to-max to N_max, filling-rate sweep | **aligned** |
 | Training data | proprietary WAAM molten-pool, 1,898 images, 9 classes, 14.7x imbalance | own WA-DED data | LoHi-WELD (primary); RIAWELC historical only | deliberate public substitution |

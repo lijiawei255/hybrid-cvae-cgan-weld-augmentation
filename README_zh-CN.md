@@ -71,14 +71,18 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 
 **不可与论文直接比较。** 准确率、F1、FID 绝对值、DR/MDR。LoHi-WELD 没有非缺陷类，因此 DR/MDR 在此不可定义。
 
-**未完整复现。** 期刊 physics-guided 损失；21 帧时序增广与 LSTM/GRU 分类器；论文残差编码器体；FFT 去噪已实现但默认关闭。
+**未完整复现。** 期刊 physics-guided 损失；21 帧时序增广与 LSTM/GRU 分类器；论文残差编码器体；期刊的 Charbonnier 重建损失、Tanh 解码器、projection 判别器与 free-bits KL；其 32→256 编码器通道宽度；FFT 去噪已实现但默认关闭。GroupNorm 现在可通过 `--d_norm` 与 `--g_norm` 用于每个网络，但只有判别器那一侧被测量过。逐条清单（含论文本身含糊、由本仓库自行决定的那些选择）见 [`docs/USAGE.md`](docs/USAGE.md#what-this-repo-deliberately-does-not-reproduce)。
 
 ## 免责声明
 
 - 本仓库是**仅基于已发表论文的独立复现**，**与原作者及其机构无隶属、背书或任何关联**。
 - 原作者的 WAAM 数据集为专有数据，本项目**未使用、未访问、未索取**。
 - 所有实验均在**公开可获取、许可开放的数据集**上进行。各数据集自身许可适用。
-- 本仓库不复制论文中的任何图、表或文字。
+- 本仓库不复制、也不声称论文中的**任何图像**与专有数据。期刊扩展以
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 开放获取，
+  [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 8 节在该许可下带署名引用了
+  其 Fig. 15(a) 的消融数值，用以说明本仓库没有复现其头条结果的哪一部分；
+  会议论文的少量引文同理。
 - 本项目复现的是*方法*，**不**声称复现论文的实验结果或报告数字。
 
 ## 快速开始
@@ -94,10 +98,15 @@ pip install -r requirements.txt
 python src/smoke_test.py
 
 # 训练联合模型（推荐的 LoHi-WELD 配置）
+# --patience/--lr_patience 70 关掉早停与学习率衰减，跑满 70 epoch，这是被测量的
+# 那一版的做法。用默认值（10 与 5）时本次训练约在第 32 epoch 停止，得到的是
+# 另一个生成器。
 python src/train_joint.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
   --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
-  --kl_weight 0.059 --d_norm group --weighted_sampler \
+  --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
+  --patience 70 --lr_patience 70 --d_norm group --weighted_sampler \
+  --fid_every 5 --sample_every 10 \
   --out_dir runs/joint_lohi_recommended
 
 # 生成 balance-to-max 池
@@ -105,13 +114,18 @@ python src/generate.py --ckpt runs/joint_lohi_recommended/joint.pt \
   --counts "pore=560,deposit=450,discontinuity=300,stain=0" --out_root generated
 
 # 下游扫描：每个 filling rate 一个从零训练的分类器
+# 下面每一张已发表的表格都用 --selection final 打分；当前默认值 best_val
+# 选的是另一个 epoch。
 python src/train_classifier.py --data_root data/lohi --gen_root generated \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
-  --ratios "0.0,0.25,0.5,0.75,1.0" --channels 3 --epochs 100 --out_dir runs/sweep
+  --ratios "0.0,0.25,0.5,0.75,1.0" --channels 3 --epochs 100 \
+  --selection final --out_dir runs/sweep
 
-# 论文风格图
+# 论文风格图，来自上面两次运行。仓库里已提交的图出自已发表的运行，
+# 对应关系见下方出处表。
 python src/make_paper_figures.py --data_root data/lohi \
-  --ckpt runs/joint_lohi/joint.pt --history runs/joint_lohi/history.csv \
+  --ckpt runs/joint_lohi_recommended/joint.pt \
+  --history runs/joint_lohi_recommended/history.csv \
   --sweep runs/sweep/sweep_metrics.csv --cm_dir runs/sweep \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
   --out_dir results
@@ -143,7 +157,7 @@ python src/prepare_yolo_crops.py \
 
 本节按发布原样保留 v0.2.0 的单 seed 表格；表格后的三 seed 注记（v0.3.0 加入）是 r=1.0 结论的当前读法。
 
-单 seed（42）。生成器：在论文规模子集（pore 40 / deposit 150 / discontinuity 300 / stain 600）上联合训练 CVAE-CGAN，70 epoch 中于第 25 epoch 早停（最佳 epoch 15）。诊断：FID 从 371 降至 216 后在 ~200 平台（仅作诊断，不可与任何已发表 FID 比较）；重建 MSE 0.049–0.060，对照常数均值基线 0.062；样图网格显示清晰的类形态。
+单 seed（42）。生成器：在论文规模子集（pore 40 / deposit 150 / discontinuity 300 / stain 600）上联合训练 CVAE-CGAN，70 epoch 中于第 25 epoch 早停（最佳 epoch 15）。诊断：FID 从 371 降至 216 后在 ~200 平台（仅作诊断，不可与任何已发表 FID 比较）；样图网格显示清晰的类形态。在最佳 epoch，该生成器的验证重建 MSE 为 0.0498（训练 0.0592），对照在它自己那 800 张验证集上实测的两个平凡预测器：常数全局均值为 0.0556，逐图自身均值为 0.0339。也就是说它越过了常数均值这条线，而**没有**达到逐图均值这条更严的线，并且 25 个 epoch 里只有 6 个低于常数均值。早先版本在此处写的常数均值基线 0.062 已更正；正确的一对是 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 6、9 节里的 0.0556 / 0.0339。
 
 **Filling-rate 扫描**——每个 ratio 一个从零训练的 ResNet-18，各 100 epoch，全部在同一个 held-out 纯真实测试集（1,603 张）上评估（划分为**裁剪级**——实测 99.8–100% 的测试裁剪与训练池共享同一源图，见[局限列表](docs/USAGE.md#limitations)）：
 
@@ -154,6 +168,8 @@ python src/prepare_yolo_crops.py \
 | 0.50 | 0.8178 | 0.6767 | 0.8078 | 0.6108 | 0.9097 | 0.3590 | 0.8273 |
 | 0.75 | 0.8141 | 0.7029 | 0.8064 | 0.5957 | 0.8977 | **0.4902** | 0.8281 |
 | 1.00（balance-to-max） | 0.7392 | 0.6418 | 0.7403 | 0.6199 | 0.7932 | 0.3871 | 0.7669 |
+
+本节两张表都以 `--selection final` 打分、FID 以 `--fid_backend legacy` 计算；今天的默认值是 `best_val` 与 `pytorch_fid`，是不同的协议和不同的尺度。**在同一 seed 下重跑同一配置，pore F1 会变动 0.034、macro-F1 会变动 0.009**（实测，[`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 10 节），所以任何小于该幅度的逐比例差异都应读作噪声——包括下表 r=0.75 处的 +0.009 macro-F1。
 
 两个按实测报告的发现：
 
@@ -170,7 +186,7 @@ python src/prepare_yolo_crops.py \
 > 因此 GroupNorm 和加权采样**不是**符号反转的必要条件。完整表格、划分重叠测量与限制见
 > [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 9 节。
 
-`results/` 中的图。**每张图都属于某一次特定运行**：
+`results/` 中的图。**每张图都属于某一次特定运行**，而且只有第一行能仅凭本仓库已提交的内容重画；其余需要生成器 checkpoint 或原始运行目录里的逐比例混淆矩阵，而那些目录被 gitignore（见[可复现性](#可复现性)）：
 
 | 图 | 由哪次运行产出 |
 |---|---|
@@ -180,7 +196,21 @@ python src/prepare_yolo_crops.py \
 | `confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png` | 已发布的 v0.2.0 扫描 |
 | `real_vs_generated.png`、`class_*.png` | 推荐的 `runs/paper2_gn_wrs` 生成器 |
 
-第一行与最后一行的复现命令见 `docs/CALIBRATION.md` 第 9 节。这些图背后的原始指标导出（扫描与训练历史 CSV）发布在 [`results/metrics/`](results/metrics/README.md) 下，每个运行名一个子目录，因此无需原始运行目录即可复现那些图命令。
+第一行与最后一行的复现命令见 `docs/CALIBRATION.md` 第 9 节。这些图背后的原始指标导出（扫描与训练历史 CSV，以及逐比例混淆矩阵 `cm_r*.npy`）发布在 [`results/metrics/`](results/metrics/README.md) 下，每个运行名一个子目录，因此仅需 CSV 的那些图无需原始运行目录即可复现。
+
+### 可复现性
+
+本仓库带什么、不带什么：
+
+| 产物 | 是否随仓库分发 | 对你意味着什么 |
+|---|---|---|
+| 每个已发表数字背后的指标 | 是，`results/metrics/` | 无需 GPU 即可核对全部表格 |
+| 逐比例混淆矩阵（`cm_r*.npy`） | 是，`results/metrics/` | `confusion_matrices.png` 无需重训即可重画 |
+| 生成器 checkpoint（`joint.pt`） | 否，对 git 过大 | 作为附件发布在 Zenodo 记录上；否则需自行重训 |
+| 生成图像池 | 否 | 用 `src/generate.py` 从 checkpoint 重新生成 |
+| LoHi-WELD 数据本身 | 否 | 自行下载后运行 `src/prepare_yolo_crops.py` |
+
+确切环境：`requirements.txt` 给出受支持的版本范围，`requirements-lock.txt` 钉住产出这些结果时的确切版本。即便固定 seed，GPU 结果也不是逐比特可复现的（[`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 10 节）。
 
 ![按 seed 聚合的填充率曲线](results/filling_rate_multiseed.png)
 

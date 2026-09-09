@@ -190,3 +190,48 @@ references:
         given-names: "Andrew"
     year: 2015
     notes: "ICLR 2015. VGG19 is the frozen feature extractor for the perceptual loss."
+  - type: conference-paper
+    title: "Spectral Normalization for Generative Adversarial Networks"
+    authors:
+      - family-names: "Miyato"
+        given-names: "Takeru"
+      - family-names: "Kataoka"
+        given-names: "Toshiki"
+      - family-names: "Koyama"
+        given-names: "Masanori"
+      - family-names: "Yoshida"
+        given-names: "Yuichi"
+    year: 2018
+    notes: "ICLR 2018. Spectral normalisation bounds the discriminator's score, which is what keeps the hinge generator term bounded; specified by the journal extension and applied here."
+  - type: conference-paper
+    title: "Real-Time Single Image and Video Super-Resolution Using an Efficient Sub-Pixel Convolutional Neural Network"
+    authors:
+      - family-names: "Shi"
+        given-names: "Wenzhe"
+      - family-names: "Caballero"
+        given-names: "Jose"
+      - family-names: "Huszar"
+        given-names: "Ferenc"
+      - family-names: "Totz"
+        given-names: "Johannes"
+      - family-names: "Aitken"
+        given-names: "Andrew P."
+      - family-names: "Bishop"
+        given-names: "Rob"
+      - family-names: "Rueckert"
+        given-names: "Daniel"
+      - family-names: "Wang"
+        given-names: "Zehan"
+    year: 2016
+    doi: "10.1109/CVPR.2016.207"
+    notes: "CVPR 2016. Sub-Pixel (PixelShuffle) convolution is the decoder's upsampling operator, specified by the conference paper."
+  - type: conference-paper
+    title: "Group Normalization"
+    authors:
+      - family-names: "Wu"
+        given-names: "Yuxin"
+      - family-names: "He"
+        given-names: "Kaiming"
+    year: 2018
+    doi: "10.1007/978-3-030-01261-8_1"
+    notes: "ECCV 2018. GroupNorm is the journal extension's normalisation choice, selectable here via --d_norm and --g_norm."

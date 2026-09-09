@@ -9,7 +9,7 @@ so replacing `runs/` with `results/metrics/` in them reproduces every figure
 that needs neither the dataset nor a GPU - including
 `src/make_multiseed_figure.py` with its `--exclude` and `--reference` inputs.
 
-Two file kinds:
+Three file kinds:
 
 * `sweep_metrics.csv` - long-format `ratio,metric,value` exports written by
   `src/train_classifier.py`: per-class precision/recall/F1/support, accuracy,
@@ -19,7 +19,19 @@ Two file kinds:
   flag and used the same behaviour).
 * `history.csv` - per-epoch generator training logs written by
   `src/train_joint.py`. The v0.2.0-era `joint_lohi` log predates the `beta`
-  column that v0.4.0 added for the KL-annealing schedule.
+  column that v0.4.0 added for the KL-annealing schedule. **Every `fid` column
+  here is on the `--fid_backend legacy` (torchvision) scale**: all of these runs
+  predate v0.4.0's switch to pytorch-fid as the default, and the two scales are
+  not comparable. Do not plot them on one axis.
+* `cm_r*.npy` - the per-ratio confusion matrices `src/train_classifier.py`
+  writes, one 4x4 integer array per filling rate, rows = true class in the
+  dataset's sorted class order (deposit, discontinuity, pore, stain). They are
+  what `src/make_paper_figures.py --cm_dir` reads, so
+  `results/confusion_matrices.png` redraws from this directory alone. Each one
+  reproduces its own row of the neighbouring `sweep_metrics.csv`.
+
+`SHA256SUMS` lists every file here. Verify with `sha256sum -c SHA256SUMS` from
+this directory.
 
 | File | Run | Backs |
 | --- | --- | --- |
@@ -36,3 +48,9 @@ Two file kinds:
 
 Nothing here was edited or retrained; the numbers are the historical
 snapshots the docs already quote.
+
+Runs added after v0.5.1 - the `--selection best_val` rescoring of the five
+sweeps above, and the GroupNorm-only, extra-seed control and source-grouped
+split arms - are in sibling directories named for their run, and are described
+in [`docs/CALIBRATION.md`](../../docs/CALIBRATION.md) section 11. They do not
+replace anything above.

@@ -84,8 +84,10 @@ No figure, table or number in the current results derives from it.
 - **Roboflow Universe "weld" dataset (Kaggle-sourced)**: ~4756 visible-light
   weld images, CC BY 4.0 (attribution required). Closer to the paper's
   imaging modality. Requires a free Roboflow account and API key.
-- **GDXray welds series** (https://grima.cl/datasets/): X-ray weld images,
-  free for research use.
+- **GDXray welds series**: X-ray weld images, free for research use. The
+  `grima.cl` host that distributed it no longer resolves (checked
+  2026-09-10); the series is now reachable through its published DOI
+  and mirrors rather than that address.
 
 ## Reproduced papers (for attribution, not data sources)
 
