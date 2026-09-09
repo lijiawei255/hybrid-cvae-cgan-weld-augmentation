@@ -61,8 +61,9 @@ from data import (ClassFolderDataset, FFTLowPass, assert_channels_match_data,
                   parse_name_counts, sample_named_subset)
 from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
                       _stats, balanced_labels, frechet_distance)
-from models import (Decoder, Discriminator, Encoder, PerceptualLoss, cvae_loss,
-                    hinge_d, hinge_g, kl_schedule, reparameterize, weights_init)
+from models import (ADV_LOSSES, DEFAULT_ADV_LOSS, Decoder, Discriminator, Encoder,
+                    PerceptualLoss, cvae_loss, kl_schedule, reparameterize,
+                    weights_init)
 
 
 def parse_kl_warmup(text):
@@ -179,19 +180,45 @@ def main():
     ap.add_argument("--patience", type=int, default=10, help="early-stopping patience in epochs")
     ap.add_argument("--lr_factor", type=float, default=0.2)
     ap.add_argument("--lr_patience", type=int, default=5)
+    ap.add_argument("--split_by", choices=("crop", "source"), default="crop",
+                    help="'crop' (default) is the published protocol: a stratified split of "
+                         "individual crops, under which 99.8-100%% of test crops share a source "
+                         "frame with the train pool (docs/CALIBRATION.md section 9). 'source' "
+                         "assigns each source frame as a whole, so no frame straddles the split; "
+                         "it answers a different question and its numbers are not comparable to "
+                         "the published tables.")
+    ap.add_argument("--adv_loss", choices=tuple(ADV_LOSSES), default=DEFAULT_ADV_LOSS,
+                    help="adversarial objective. 'hinge' (default, with spectral normalisation) "
+                         "is the journal extension's and is what every tagged run used. 'bce' is "
+                         "the conference paper's minimax objective; combined with "
+                         "--no_d_spectral_norm it is that paper's original configuration, which "
+                         "is expressible on purpose but was measured to fail at this data scale "
+                         "(docs/CALIBRATION.md section 6): its generator term is unbounded above, "
+                         "so a confident discriminator overwhelms reconstruction.")
+    ap.add_argument("--no_d_spectral_norm", dest="d_spectral_norm", action="store_false",
+                    help="drop spectral normalisation from the discriminator. Default is on, as "
+                         "in the journal extension; off plus --adv_loss bce is the conference "
+                         "paper's original, unbounded configuration.")
+    ap.set_defaults(d_spectral_norm=True)
+    ap.add_argument("--g_norm", choices=("batch", "group"), default="batch",
+                    help="encoder/decoder normalisation. 'batch' is what every tagged run used "
+                         "and is the default. The journal paper's Table 3 lists GroupNorm for "
+                         "*every* network, not only the discriminator, so 'group' is what "
+                         "reproducing it fully requires; unlike --d_norm this has not been "
+                         "measured here.")
     ap.add_argument("--d_norm", choices=("batch", "group"), default="batch",
                     help="discriminator normalisation. 'batch' is what the tagged v0.2.0 runs "
                          "used; 'group' is the journal paper's Table 3 choice, made \"to ensure "
                          "stability with small batch sizes, avoiding the statistical instability "
                          "associated with Batch Normalisation\". At --batch_size 8 a BatchNorm D "
                          "scores an image using statistics from its seven batch neighbours; our "
-                         "measured hinge_d sits at a median of 0.82 (dominant D, 97% of epochs "
+                         "measured hinge_d sits at a median of 0.82 (dominant D, 97%% of epochs "
                          "below 1.5) where the paper reports an equilibrium near 2.0.")
     ap.add_argument("--weighted_sampler", action="store_true",
                     help="draw training batches with WeightedRandomSampler at P ~ 1/N_class, the "
                          "journal paper's data-balancing strategy. Off by default so the tagged "
                          "v0.2.0 runs stay reproducible. --subset caps per-class counts but does "
-                         "not balance batches: a 40-image class in a 1090-image subset is 3.7% of "
+                         "not balance batches: a 40-image class in a 1090-image subset is 3.7%% of "
                          "draws, so most batch_size=8 minibatches contain none of it.")
     ap.add_argument("--kl_warmup", default="",
                     help="KL annealing as 'ZERO,RAMP' epoch counts; empty (default) holds beta "
@@ -228,7 +255,7 @@ def main():
         raise SystemExit(f"no images found under {args.data_root}")
 
     # ---- crop-level splits (indices disjoint; source frames may straddle) -----
-    train_pool, test_idx = make_splits(ds.samples, args.test_frac, args.seed)
+    train_pool, test_idx = make_splits(ds.samples, args.test_frac, args.seed, args.split_by)
     subset_counts = parse_name_counts(args.subset)
     gen_train = sample_named_subset(ds, subset_counts, train_pool, args.seed)
     used = set(gen_train)
@@ -239,8 +266,9 @@ def main():
     print(f"classes ({num_classes}): {classes}")
     print(f"device={device} img_size={args.img_size} channels={args.channels} "
           f"fft_denoise={args.fft_denoise} fid_backend={args.fid_backend}")
-    print(f"d_norm={args.d_norm} weighted_sampler={args.weighted_sampler} "
-          f"kl_warmup={kl_zero},{kl_ramp} monitor={args.monitor}")
+    print(f"d_norm={args.d_norm} g_norm={args.g_norm} adv_loss={args.adv_loss} "
+          f"d_spectral_norm={args.d_spectral_norm} weighted_sampler={args.weighted_sampler} "
+          f"kl_warmup={kl_zero},{kl_ramp} monitor={args.monitor} split_by={args.split_by}")
     print(f"held-out real test (never seen by generator or classifier training): "
           f"{count_by_class(ds, test_idx)} -> {len(test_idx)}")
     print(f"generator train subset: {count_by_class(ds, gen_train)} -> {len(gen_train)}")
@@ -261,10 +289,13 @@ def main():
                             drop_last=False, **dl_kw)
 
     # ---- models --------------------------------------------------------------
-    enc = Encoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size).to(device)
-    dec = Decoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size).to(device)
+    enc = Encoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size,
+                  norm=args.g_norm).to(device)
+    dec = Decoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size,
+                  norm=args.g_norm).to(device)
     dis = Discriminator(args.channels, num_classes, args.base_ch, args.img_size,
-                        norm=args.d_norm).to(device)
+                        norm=args.d_norm, spectral=args.d_spectral_norm).to(device)
+    adv_d, adv_g = ADV_LOSSES[args.adv_loss]
     # DCGAN init is applied to the discriminator only; the encoder and decoder
     # keep PyTorch's default init. Every tagged run used this asymmetry, so it
     # is kept for reproducibility rather than extended to the generator.
@@ -344,7 +375,7 @@ def main():
             loss_cvae, l_recon, l_kl = cvae_loss(x, recon, mu, logvar, beta)
             l_perc = perc(recon, x)
             fake_g = dec(torch.randn(b, args.latent_dim, device=device), y)
-            l_adv = hinge_g(dis(fake_g, y))
+            l_adv = adv_g(dis(fake_g, y))
             loss_g = loss_cvae + args.perc_weight * l_perc + args.adv_weight * l_adv
             if not torch.isfinite(loss_g):
                 # Stop before backward() plants NaN gradients in the weights;
@@ -356,7 +387,7 @@ def main():
 
             # ---- discriminator side: separate backward pass, same minibatch ---
             fake_d = dec(torch.randn(b, args.latent_dim, device=device), y).detach()
-            loss_d = hinge_d(dis(x, y), dis(fake_d, y))
+            loss_d = adv_d(dis(x, y), dis(fake_d, y))
             if not torch.isfinite(loss_d):
                 # Same guard as the generator side, before this network's backward().
                 raise SystemExit(
@@ -440,7 +471,9 @@ def best_state_payload(best, args, classes, num_classes):
         "best_monitored_metric": args.monitor, "best_monitored_value": best["monitored"],
         "kl_weight": args.kl_weight, "perc_weight": args.perc_weight,
         "adv_weight": args.adv_weight, "seed": args.seed,
-        "d_norm": args.d_norm, "weighted_sampler": args.weighted_sampler,
+        "d_norm": args.d_norm, "g_norm": args.g_norm,
+        "adv_loss": args.adv_loss, "d_spectral_norm": args.d_spectral_norm,
+        "split_by": args.split_by, "weighted_sampler": args.weighted_sampler,
         "kl_warmup": args.kl_warmup, "monitor": args.monitor,
         "fft_denoise": args.fft_denoise, "fft_cutoff": args.fft_cutoff,
         "subset": args.subset, "test_frac": args.test_frac,

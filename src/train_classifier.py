@@ -169,7 +169,14 @@ def main():
                     help="request deterministic CuDNN algorithms; slower, and still "
                          "not a guarantee of bit-identical GPU results")
     ap.add_argument("--test_frac", type=float, default=0.2)
+    ap.add_argument("--split_by", choices=("crop", "source"), default="crop",
+                    help="must match the generator's --split_by, and the pool's; 'crop' is the "
+                         "published protocol. See train_joint.py --split_by.")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--allow_missing_meta", action="store_true",
+                    help="sweep a generated pool that has no meta.json, so its split "
+                         "configuration cannot be checked against this run. Only for pools "
+                         "written before meta.json existed.")
     ap.add_argument("--num_workers", type=int, default=4)
     ap.add_argument("--out_dir", default="runs/classifier_sweep")
     args = ap.parse_args()
@@ -188,7 +195,7 @@ def main():
 
     # Same split and same seed as train_joint.py, so the generator never saw the
     # test images and condition r=0.0 is exactly the generator's training set.
-    train_pool, test_idx = make_splits(ds.samples, args.test_frac, args.seed)
+    train_pool, test_idx = make_splits(ds.samples, args.test_frac, args.seed, args.split_by)
     subset_idx = sample_named_subset(ds, parse_name_counts(args.subset), train_pool, args.seed)
     real_counts = count_by_class(ds, subset_idx)
     used = set(subset_idx)
@@ -202,9 +209,13 @@ def main():
     print(f"real training subset: {real_counts} -> {len(subset_idx)}")
     print(f"held-out real test:   {count_by_class(ds, test_idx)} -> {len(test_idx)}")
     print(f"selection={selection} leftover val: {count_by_class(ds, val_idx)} -> {len(val_idx)}")
+    print(f"split_by={args.split_by}")
 
     pool = generated_by_class(args.gen_root, classes)
-    verify_generation_meta(args.gen_root, args.subset, args.seed, args.test_frac)
+    verify_generation_meta(args.gen_root, args.subset, args.seed, args.test_frac,
+                           img_size=args.img_size, channels=args.channels,
+                           split_by=args.split_by,
+                           allow_missing_meta=args.allow_missing_meta)
     print("generated pool available:", {k: len(v) for k, v in pool.items()})
     n_max = max(real_counts.values())
     print(f"N_max (majority class count) = {n_max}; balance-to-max fills every class to it")

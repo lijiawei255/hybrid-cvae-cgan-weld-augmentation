@@ -872,6 +872,130 @@ def check_discriminator_normalisation_choice():
             raise AssertionError(f"norm={bad!r} must be rejected, not fall back silently")
 
 
+def check_bce_objective_is_expressible_and_unbounded():
+    """The conference paper's own BCE objective must be runnable, and must show why it fails.
+
+    docs/CALIBRATION.md section 6 rejects BCE on the grounds that its generator
+    term -log(D(G(z))) is unbounded above, so a confident discriminator makes it
+    grow without limit. That claim is only checkable if the objective is
+    expressible, which is what --adv_loss bce is for. Hinge's term stays linear
+    in the score; BCE's blows up as the score goes negative.
+    """
+    import math
+
+    import torch
+    from models import ADV_LOSSES, DEFAULT_ADV_LOSS, Discriminator, bce_d, bce_g
+
+    assert DEFAULT_ADV_LOSS == "hinge", "hinge must stay the default objective"
+    assert set(ADV_LOSSES) == {"hinge", "bce"}
+
+    # A perfect discriminator: real scored +inf-ward, fake scored -inf-ward.
+    for score in (10.0, 20.0, 40.0):
+        confident = torch.tensor([-score])
+        # -log(sigmoid(-score)) ~ score, i.e. it grows without bound.
+        assert abs(float(bce_g(confident)) - score) < 1e-3, float(bce_g(confident))
+    assert float(bce_g(torch.tensor([40.0]))) < 1e-6  # ...and vanishes when D is fooled
+
+    # bce_d is the standard two-sided term; it is ~0 when D is perfectly correct.
+    assert float(bce_d(torch.tensor([40.0]), torch.tensor([-40.0]))) < 1e-6
+    assert abs(float(bce_d(torch.zeros(1), torch.zeros(1))) - 2 * math.log(2)) < 1e-6
+
+    # The bounded/unbounded contrast is the whole argument of CALIBRATION 6.
+    hinge_term = float(ADV_LOSSES["hinge"][1](torch.tensor([-40.0])))
+    bce_term = float(ADV_LOSSES["bce"][1](torch.tensor([-40.0])))
+    assert hinge_term == 40.0 and bce_term > 39.0
+
+    # --no_d_spectral_norm has to actually remove it, or the conference paper's
+    # configuration cannot be reproduced at all.
+    with_sn = Discriminator(1, 2, base_ch=16, img_size=64)
+    without_sn = Discriminator(1, 2, base_ch=16, img_size=64, spectral=False)
+    assert any(k.endswith("weight_orig") for k in with_sn.state_dict())
+    assert not any(k.endswith("weight_orig") for k in without_sn.state_dict())
+
+
+def check_generator_normalisation_choice():
+    """--g_norm reaches the encoder and decoder, and 'batch' stays the default.
+
+    The journal paper's Table 3 lists GroupNorm for *every* network, not only the
+    discriminator, so reproducing it fully needs the generator side too. Every
+    tagged run used BatchNorm throughout, so that must remain the default and the
+    default state_dict keys must not move - otherwise published checkpoints stop
+    loading.
+    """
+    import torch
+    from models import Decoder, Encoder
+
+    default_enc, default_dec = Encoder(1, 2, 8, 32, 64), Decoder(1, 2, 8, 32, 64)
+    assert any(isinstance(m, torch.nn.BatchNorm2d) for m in default_enc.modules())
+    assert any(isinstance(m, torch.nn.BatchNorm2d) for m in default_dec.modules())
+
+    group_enc = Encoder(1, 2, 8, 32, 64, norm="group")
+    group_dec = Decoder(1, 2, 8, 32, 64, norm="group")
+    for module in (group_enc, group_dec):
+        assert not any(isinstance(m, torch.nn.BatchNorm2d) for m in module.modules())
+        assert any(isinstance(m, torch.nn.GroupNorm) for m in module.modules())
+
+    # Learnable parameter names are identical either way; only BatchNorm's
+    # running-statistics buffers differ, so a checkpoint records which norm it
+    # used (train_joint.py writes "g_norm") and generate.py rebuilds it.
+    for default, group in ((default_enc, group_enc), (default_dec, group_dec)):
+        assert list(dict(default.named_parameters())) == list(dict(group.named_parameters()))
+        extra = set(default.state_dict()) - set(group.state_dict())
+        assert all(k.rsplit(".", 1)[-1] in
+                   {"running_mean", "running_var", "num_batches_tracked"} for k in extra), extra
+
+    z, y = torch.randn(2, 8), torch.tensor([0, 1])
+    assert group_dec(z, y).shape == default_dec(z, y).shape
+
+
+def check_source_grouped_split(tmp):
+    """--split_by source must isolate source frames; --split_by crop must not change.
+
+    The published protocol is crop-level and 99.8-100% of its test crops share a
+    source frame with the train pool (docs/CALIBRATION.md section 9). That
+    default has to stay bit-identical, because every published number depends on
+    it, while the source-grouped alternative has to actually deliver what its
+    name claims.
+    """
+    from data import ClassFolderDataset, make_splits, source_key
+
+    assert source_key("a/b/frame_x_007.png") == "frame_x"
+    assert source_key("no_index.png") == "no_index"  # degrades to its own group
+
+    root = tmp / "split_data"
+    blank = Image.fromarray(np.zeros((8, 8), dtype=np.uint8))
+    for cname, frames in (("good", 12), ("defect", 8)):
+        (root / cname).mkdir(parents=True, exist_ok=True)
+        for f in range(frames):
+            for k in range(5):
+                blank.save(root / cname / f"src{f:02d}_{k:03d}.png")
+    ds = ClassFolderDataset(str(root), img_size=8, channels=1)
+
+    crop_train, crop_test = make_splits(ds.samples, 0.2, 42)
+    assert (crop_train, crop_test) == make_splits(ds.samples, 0.2, 42, "crop"),         "split_by must default to the published crop-level behaviour"
+
+    train_idx, test_idx = make_splits(ds.samples, 0.2, 42, "source")
+    assert not (set(train_idx) & set(test_idx))
+    assert len(train_idx) + len(test_idx) == len(ds)
+    train_frames = {source_key(ds.samples[i][0]) for i in train_idx}
+    test_frames = {source_key(ds.samples[i][0]) for i in test_idx}
+    assert not (train_frames & test_frames), "a source frame must not straddle the split"
+    assert test_frames, "the source-grouped test half must not be empty"
+    # Still stratified: every class keeps roughly its share of the test half.
+    for label in {l for _, l in ds.samples}:
+        n_total = sum(1 for _, l in ds.samples if l == label)
+        n_test = sum(1 for i in test_idx if ds.samples[i][1] == label)
+        assert 0.1 <= n_test / n_total <= 0.35, (label, n_test, n_total)
+
+    for bad in ("frame", "", None):
+        try:
+            make_splits(ds.samples, 0.2, 42, bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"split_by={bad!r} must be rejected")
+
+
 def check_kl_annealing_schedule():
     """The journal paper anneals beta: zero for the first 10 epochs, then linear
     to its target over the next 50 (Table 3, "KL Annealing Target 0.0 -> 0.5
@@ -958,6 +1082,9 @@ if __name__ == "__main__":
         check_paper_decoder_and_loss()
         check_hinge_losses_and_bounded_score()
         check_discriminator_normalisation_choice()
+        check_bce_objective_is_expressible_and_unbounded()
+        check_generator_normalisation_choice()
+        check_source_grouped_split(tmp)
         check_kl_annealing_schedule()
         check_class_balanced_sampling_weights()
         check_feature_aggregation_fanin()

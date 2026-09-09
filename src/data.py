@@ -12,6 +12,7 @@ every other module - keep them consistent if you change them:
   indices silently samples the wrong classes on any other dataset.
 """
 import random
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -157,27 +158,86 @@ class ListDataset(Dataset):
         return self.tf(img.convert("L" if self.channels == 1 else "RGB")), label
 
 
-def make_splits(samples, test_frac=0.2, seed=42):
-    """Stratified (train_pool, test) index split at the individual-crop level.
+#: prepare_yolo_crops.py names each crop "<encoded-source-path>_<k:03d>.png", so
+#: stripping that trailing box index recovers the source frame it was cut from.
+_CROP_INDEX_SUFFIX = re.compile(r"_\d{3}$")
 
-    The test half is real-only and held out from *both* the generator and the
-    classifier, so crop indices never cross pools. Nothing groups crops by
-    source image, though, so crops cut from the same source frame can sit on
-    both sides (see docs/USAGE.md limitations for the measured overlap on the
-    published seeds). Deterministic for a given seed so separate scripts agree
-    on the same split.
+
+def source_key(path):
+    """Source-frame identity of a crop produced by prepare_yolo_crops.py.
+
+    Crops are written as ``<encoded-source-path>_<k:03d>.png``, so removing the
+    trailing three-digit box index recovers the frame. A filename that does not
+    carry that suffix is its own group, which makes the grouping degrade to the
+    crop-level behaviour rather than silently merging unrelated files.
     """
+    return _CROP_INDEX_SUFFIX.sub("", Path(path).stem)
+
+
+def make_splits(samples, test_frac=0.2, seed=42, split_by="crop"):
+    """(train_pool, test) index split. The test half is real-only throughout.
+
+    ``split_by="crop"`` is the published protocol and the default: a stratified
+    split of individual crops. Crop indices never cross pools, but nothing groups
+    crops by source image, so crops cut from the same source frame can sit on both
+    sides - measured at 99.8-100% of test crops on the published seeds
+    (docs/CALIBRATION.md section 9). Absolute downstream numbers under it are
+    optimistic about generalisation to unseen source frames.
+
+    ``split_by="source"`` groups by source frame first, so no source frame
+    contributes to both halves. Classes are still handled independently and each
+    one's frames are consumed until its test share reaches ``test_frac``, so the
+    split stays stratified to within one frame's worth of crops. This is the
+    experiment docs/USAGE.md names as the one a fork should run; it is not the
+    protocol the published tables used.
+
+    Deterministic for a given seed so separate scripts agree on the same split.
+    """
+    if split_by not in ("crop", "source"):
+        raise ValueError(f"split_by must be 'crop' or 'source', got {split_by!r}")
     rng = random.Random(seed)
     by_label = {}
     for i, (_, label) in enumerate(samples):
         by_label.setdefault(label, []).append(i)
+
+    if split_by == "crop":
+        train_idx, test_idx = [], []
+        for label, idxs in sorted(by_label.items()):
+            idxs = idxs[:]
+            rng.shuffle(idxs)
+            k = round(len(idxs) * test_frac)
+            test_idx.extend(idxs[:k])
+            train_idx.extend(idxs[k:])
+        return sorted(train_idx), sorted(test_idx)
+
+    # Source-grouped: a frame is assigned as a whole, across every class it
+    # contributes to, so no source frame can appear on both sides. One frame
+    # often carries crops of several classes, so grouping per class instead
+    # would still let a frame straddle the split.
+    groups = {}
+    for i, (path, label) in enumerate(samples):
+        groups.setdefault(source_key(path), []).append(i)
+    target = {label: round(len(idxs) * test_frac) for label, idxs in by_label.items()}
+    taken = {label: 0 for label in by_label}
+    keys = sorted(groups)
+    rng.shuffle(keys)
     train_idx, test_idx = [], []
-    for label, idxs in sorted(by_label.items()):
-        idxs = idxs[:]
-        rng.shuffle(idxs)
-        k = round(len(idxs) * test_frac)
-        test_idx.extend(idxs[:k])
-        train_idx.extend(idxs[k:])
+    for key in keys:
+        members = groups[key]
+        counts = {}
+        for i in members:
+            counts[samples[i][1]] = counts.get(samples[i][1], 0) + 1
+        # Take the frame only if most of its crops fill classes still short of
+        # their target, which keeps the test half stratified to within roughly
+        # one frame per class without ever splitting a frame.
+        useful = sum(min(n, max(0, target[label] - taken[label]))
+                     for label, n in counts.items())
+        if useful * 2 >= len(members):
+            test_idx.extend(members)
+            for label, n in counts.items():
+                taken[label] += n
+        else:
+            train_idx.extend(members)
     return sorted(train_idx), sorted(test_idx)
 
 
