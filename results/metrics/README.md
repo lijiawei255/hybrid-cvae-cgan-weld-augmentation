@@ -33,6 +33,28 @@ Three file kinds:
 `SHA256SUMS` lists every file here. Verify with `sha256sum -c SHA256SUMS` from
 this directory.
 
+## Redrawing the four CSV-only figures
+
+`src/make_paper_figures.py` writes the class-distribution, training-curve,
+filling-rate and confusion-matrix figures without a checkpoint, a GPU or the
+dataset. Omit `--ckpt` and `--data_root` and it skips the model-dependent
+figures and uses `--subset` for the class names and counts:
+
+```bash
+python src/make_paper_figures.py \
+  --history results/metrics/joint_lohi/history.csv \
+  --sweep results/metrics/sweep/sweep_metrics.csv \
+  --cm_dir results/metrics/sweep \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --out_dir results
+```
+
+Checked against the committed images: `class_distribution.png`,
+`training_curves.png` and `filling_rate_curve.png` come back byte-identical.
+`confusion_matrices.png` differs in 0.35% of its pixels, all of them inside one
+band of title text; the matrices themselves are identical, and the difference is
+font rendering drift between matplotlib versions.
+
 | File | Run | Backs |
 | --- | --- | --- |
 | `sweep_paper2_s42/sweep_metrics.csv` | classifier sweep, seed 42 | the multi-seed figure; the excluded r=0.25 arm (macro-F1 0.5868) discussed in CALIBRATION sections 9-10 |

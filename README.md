@@ -284,13 +284,14 @@ first row is regenerable from what this repository ships - the rest need a
 generator checkpoint or per-ratio confusion matrices from the original run
 directories, which are git-ignored (see [Reproducibility](#reproducibility)):
 
-| figure | run it was produced from |
-|---|---|
-| `filling_rate_multiseed.png` | the three-seed GroupNorm + balanced-sampler sweep above |
-| `filling_rate_curve.png` | the published v0.2.0 single-seed sweep (`runs/sweep`) |
-| `training_curves.png`, `reconstruction_comparison.png`, `latent_tsne.png` | the published v0.2.0 generator (`runs/joint_lohi`) |
-| `confusion_matrices.png` (r=0 vs r=1), `class_distribution.png` | the published v0.2.0 sweep |
-| `real_vs_generated.png`, `class_*.png` | the recommended `runs/paper2_gn_wrs` generator |
+| figure | run it was produced from | regenerable here? |
+|---|---|---|
+| `filling_rate_multiseed.png` | the three-seed GroupNorm + balanced-sampler sweep above | yes, from `results/metrics/` |
+| `filling_rate_curve.png` | the published v0.2.0 single-seed sweep (`runs/sweep`) | yes, from `results/metrics/` |
+| `confusion_matrices.png` (r=0 vs r=1), `class_distribution.png` | the published v0.2.0 sweep | yes, from `results/metrics/` |
+| `training_curves.png` | the published v0.2.0 generator (`runs/joint_lohi`) | yes, from `results/metrics/` |
+| `reconstruction_comparison.png`, `latent_tsne.png` | the published v0.2.0 generator (`runs/joint_lohi`) | needs that checkpoint |
+| `real_vs_generated.png`, `class_*.png` | the recommended `runs/paper2_gn_wrs` generator | needs that checkpoint |
 
 Reproduce commands for the first and last rows: `docs/CALIBRATION.md` section 9.
 The raw metric exports behind these figures (sweep and training-history CSVs)
