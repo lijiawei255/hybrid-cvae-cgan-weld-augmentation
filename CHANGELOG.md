@@ -23,6 +23,19 @@ defaults, or published numbers change.
   summary table, a table of contents, and a Zenodo archive link in the
   citation section.
 
+### Changed
+
+- **`ClassFolderDataset` sorts crop filenames by name rather than by `Path`.**
+  `Path` comparison is case-insensitive on Windows and case-sensitive on POSIX,
+  so a class folder holding filenames that differ only in case was enumerated
+  in a different order on the two platforms - and that order is what the seeded
+  split indexes into. Sorting on the name string is platform-independent.
+  Verified not to change the published splits: the seed-42/43/44 train, test,
+  subset and validation index lists are SHA-256 identical before and after, on
+  the LoHi-WELD crop tree behind every published number, whose filenames are
+  digits and underscores only. A dataset that does contain case-varying names
+  in one class folder will split differently on Windows than it did before.
+
 ## v0.5.1 - 2026-09-08
 
 Interface fixes and disclosure pass prompted by an external audit and a

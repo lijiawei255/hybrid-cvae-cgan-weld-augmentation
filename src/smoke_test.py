@@ -995,6 +995,36 @@ def check_source_grouped_split(tmp):
         else:
             raise AssertionError(f"split_by={bad!r} must be rejected")
 
+    # A class concentrated in a few large frames must still reach both sides.
+    # Taking any one of its frames overshoots its test target on its own, so a
+    # greedy rule that only accepts frames doing "more good than harm" would
+    # route every one of them to training and leave the class with no test
+    # images at all - silently, since nothing downstream checks for it.
+    concentrated = ([(f"big{f}_{k:03d}.png", 0) for f in range(2) for k in range(10)]
+                    + [(f"sm{f}_{k:03d}.png", 1) for f in range(10) for k in range(3)])
+    train_idx, test_idx = make_splits(concentrated, 0.2, 42, "source")
+    for label in (0, 1):
+        n_test = sum(1 for i in test_idx if concentrated[i][1] == label)
+        n_train = sum(1 for i in train_idx if concentrated[i][1] == label)
+        assert n_test > 0, f"class {label} got no test crops"
+        assert n_train > 0, f"class {label} got no training crops"
+    assert not ({source_key(concentrated[i][0]) for i in train_idx}
+                & {source_key(concentrated[i][0]) for i in test_idx})
+
+    # And when no frame-level split can put a class on both sides - every one of
+    # its crops comes from a single frame - that must be an error, not a split
+    # in which the class is missing from one half.
+    impossible = ([(f"only_{k:03d}.png", 0) for k in range(20)]
+                  + [(f"sm{f}_{k:03d}.png", 1) for f in range(10) for k in range(3)])
+    try:
+        make_splits(impossible, 0.2, 42, "source")
+    except ValueError as exc:
+        assert "source frame" in str(exc), str(exc)
+    else:
+        raise AssertionError(
+            "a class whose crops all come from one source frame cannot be split "
+            "by source; that must raise rather than silently drop it from a half")
+
 
 def check_kl_annealing_schedule():
     """The journal paper anneals beta: zero for the first 10 epochs, then linear

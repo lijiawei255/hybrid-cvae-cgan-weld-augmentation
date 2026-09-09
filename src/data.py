@@ -222,27 +222,66 @@ def make_splits(samples, test_frac=0.2, seed=42, split_by="crop"):
     groups = {}
     for i, (path, label) in enumerate(samples):
         groups.setdefault(source_key(path), []).append(i)
-    target = {label: round(len(idxs) * test_frac) for label, idxs in by_label.items()}
+    counts_of = {}
+    for key, members in groups.items():
+        c = {}
+        for i in members:
+            c[samples[i][1]] = c.get(samples[i][1], 0) + 1
+        counts_of[key] = c
+    total = {label: len(idxs) for label, idxs in by_label.items()}
+    target = {label: round(n * test_frac) for label, n in total.items()}
     taken = {label: 0 for label in by_label}
+
     keys = sorted(groups)
     rng.shuffle(keys)
-    train_idx, test_idx = [], []
+    in_test = set()
+    # Pass 1. Take a frame when it does more good than harm: more of its crops
+    # fill a class still short of its target than overshoot one already met.
     for key in keys:
-        members = groups[key]
-        counts = {}
-        for i in members:
-            counts[samples[i][1]] = counts.get(samples[i][1], 0) + 1
-        # Take the frame only if most of its crops fill classes still short of
-        # their target, which keeps the test half stratified to within roughly
-        # one frame per class without ever splitting a frame.
+        counts = counts_of[key]
         useful = sum(min(n, max(0, target[label] - taken[label]))
                      for label, n in counts.items())
-        if useful * 2 >= len(members):
-            test_idx.extend(members)
+        if useful * 2 >= len(groups[key]):
+            in_test.add(key)
             for label, n in counts.items():
                 taken[label] += n
-        else:
-            train_idx.extend(members)
+
+    # Pass 2. A class whose crops sit in a few large frames can be shut out of
+    # the test half entirely by pass 1: every one of its frames overshoots the
+    # target on its own, so none of them ever looks worth taking. Give each such
+    # class the frame that overshoots least, so no class silently ends up with
+    # no test crops at all.
+    for label in sorted(by_label):
+        if target[label] < 1 or taken[label] > 0:
+            continue
+        candidates = [k for k in keys if k not in in_test and counts_of[k].get(label)]
+        if not candidates:
+            continue
+        best = min(candidates, key=lambda k: (counts_of[k][label], k))
+        in_test.add(best)
+        for lab, n in counts_of[best].items():
+            taken[lab] += n
+
+    train_idx, test_idx = [], []
+    for key in keys:
+        (test_idx if key in in_test else train_idx).extend(groups[key])
+
+    # A class whose crops all come from source frames that the other side needs
+    # cannot be represented on both sides at all - no frame-level split of this
+    # data exists at this test_frac. Say so instead of returning a split where
+    # that class silently has no test images, or no training images.
+    for label in sorted(by_label):
+        if total[label] < 2:
+            continue
+        if taken[label] == 0 or taken[label] == total[label]:
+            side = "test" if taken[label] == 0 else "training"
+            frames = sorted({source_key(samples[i][0]) for i in by_label[label]})
+            raise ValueError(
+                f"class label {label} has {total[label]} crops from only "
+                f"{len(frames)} source frame(s), so a source-grouped split at "
+                f"test_frac={test_frac} leaves it with no {side} images. Its crops "
+                f"are too concentrated in single frames for split_by='source'; use "
+                f"split_by='crop', change test_frac, or add more source frames.")
     return sorted(train_idx), sorted(test_idx)
 
 
