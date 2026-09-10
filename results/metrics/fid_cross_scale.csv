@@ -1,0 +1,21 @@
+pool,generator,scope,class,backend,real_reference,n_real,n_fake,fid
+generated,runs/joint_lohi/joint.pt,balanced_shared_classes,4_classes,pytorch_fid,whole data/lohi tree; class-balanced to the smallest shared count,300,300,278.6223
+generated,runs/joint_lohi/joint.pt,balanced_shared_classes,4_classes,legacy,whole data/lohi tree; class-balanced to the smallest shared count,300,300,220.7004
+generated_ctrl,runs/probe_eq_g0.1/joint.pt,balanced_shared_classes,3_classes,pytorch_fid,whole data/lohi tree; class-balanced to the smallest shared count,300,300,274.1485
+generated_ctrl,runs/probe_eq_g0.1/joint.pt,balanced_shared_classes,3_classes,legacy,whole data/lohi tree; class-balanced to the smallest shared count,300,300,160.6934
+generated_paper2,runs/paper2_gn_wrs/joint.pt,balanced_shared_classes,3_classes,pytorch_fid,whole data/lohi tree; class-balanced to the smallest shared count,300,300,284.2703
+generated_paper2,runs/paper2_gn_wrs/joint.pt,balanced_shared_classes,3_classes,legacy,whole data/lohi tree; class-balanced to the smallest shared count,300,300,213.2300
+generated_paper2_s43,runs/paper2_gn_wrs_s43/joint.pt,balanced_shared_classes,3_classes,pytorch_fid,whole data/lohi tree; class-balanced to the smallest shared count,300,300,232.6689
+generated_paper2_s43,runs/paper2_gn_wrs_s43/joint.pt,balanced_shared_classes,3_classes,legacy,whole data/lohi tree; class-balanced to the smallest shared count,300,300,185.3590
+generated_paper2_s44,runs/paper2_gn_wrs_s44/joint.pt,balanced_shared_classes,3_classes,pytorch_fid,whole data/lohi tree; class-balanced to the smallest shared count,300,300,360.6064
+generated_paper2_s44,runs/paper2_gn_wrs_s44/joint.pt,balanced_shared_classes,3_classes,legacy,whole data/lohi tree; class-balanced to the smallest shared count,300,300,243.7258
+generated_showcase,runs/paper2_gn_wrs/joint.pt,balanced_shared_classes,4_classes,pytorch_fid,whole data/lohi tree; class-balanced to the smallest shared count,300,300,283.6501
+generated_showcase,runs/paper2_gn_wrs/joint.pt,balanced_shared_classes,4_classes,legacy,whole data/lohi tree; class-balanced to the smallest shared count,300,300,216.3760
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,deposit,pytorch_fid,all seed-42 train-pool crops of the class (test split excluded),954,300,268.48
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,discontinuity,pytorch_fid,all seed-42 train-pool crops of the class (test split excluded),2380,300,290.16
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,pore,pytorch_fid,all seed-42 train-pool crops of the class (test split excluded),243,300,295.86
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,stain,pytorch_fid,all seed-42 train-pool crops of the class (test split excluded),2832,300,306.36
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,deposit,legacy,all seed-42 train-pool crops of the class (test split excluded),954,300,198.82
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,discontinuity,legacy,all seed-42 train-pool crops of the class (test split excluded),2380,300,224.86
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,pore,legacy,all seed-42 train-pool crops of the class (test split excluded),243,300,185.87
+generated_showcase,runs/paper2_gn_wrs/joint.pt,per_class,stain,legacy,all seed-42 train-pool crops of the class (test split excluded),2832,300,222.45
