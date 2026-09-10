@@ -8,7 +8,7 @@
 [![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C.svg)](https://pytorch.org/)
 [![Conference paper DOI](https://img.shields.io/badge/DOI-10.1109%2FCYBER67662.2025.11168313-007EC7.svg)](https://doi.org/10.1109/CYBER67662.2025.11168313)
 [![Journal extension DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.ymssp.2026.114138-007EC7.svg)](https://doi.org/10.1016/j.ymssp.2026.114138)
-[![Zenodo DOI](https://img.shields.io/badge/Zenodo-10.5281%2Fzenodo.22660143-0067A8.svg)](https://doi.org/10.5281/zenodo.22660143)
+[![Zenodo DOI](https://img.shields.io/badge/Zenodo-10.5281%2Fzenodo.22645144-0067A8.svg)](https://doi.org/10.5281/zenodo.22645144)
 [![Status: complete / as-is](https://img.shields.io/badge/status-complete_/_as--is-lightgrey.svg)](CHANGELOG.md)
 
 > The English README is normative. The Chinese translation (`README_zh-CN.md`) is
@@ -49,8 +49,8 @@ the papers live in [`docs/CALIBRATION.md`](docs/CALIBRATION.md).
 | **Method** | Single jointly-trained hybrid CVAE-CGAN: one decoder is both `D(z, y)` and `G(z, y)`; MSE + KL + VGG19 perceptual + hinge adversarial (spectral norm) |
 | **Data** | Public LoHi-WELD weld-bead crops (the papers used proprietary WAAM melt-pool imagery; results are not comparable) |
 | **Entry points** | `smoke_test.py` -> `train_joint.py` -> `generate.py` -> `train_classifier.py` (+ `eval_fid.py`), all in `src/` |
-| **Headline result** | Balance-to-max (r=1.0) macro-F1 0.7185 ± 0.0019 across three seeds, +0.0399 over the real-only mean (see [Results](#results---lohi-weld-current)) |
-| **Status** | Complete / as-is; frozen reference implementation, v0.5.1 ([CHANGELOG](CHANGELOG.md)) |
+| **Headline result** | Balance-to-max (r=1.0) macro-F1 0.7185 ± 0.0019 across three seeds, +0.0399 over the real-only mean, **on the crop-level split**; under a source-frame-grouped split the gain does not survive (-0.0187, pore F1 -0.1041, three seeds; see [Results](#results---lohi-weld-current)) |
+| **Status** | Complete / as-is; frozen reference implementation, v0.5.2 ([CHANGELOG](CHANGELOG.md)) |
 
 ## Contents
 
@@ -253,10 +253,12 @@ the train pool, see the [limitations](docs/USAGE.md#limitations)):
 Both tables in this section were scored with `--selection final` and their FID
 figures with `--fid_backend legacy`; today's defaults are `best_val` and
 `pytorch_fid`, which are different protocols and different scales. **Repeating
-an unchanged arm at the same seed moves pore F1 by 0.034 and macro-F1 by 0.009**
-(measured, [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 10), so read any
-single per-ratio difference smaller than that as noise - including the +0.009
-macro-F1 at r=0.75 below.
+an unchanged real-only arm at the same seed moves macro-F1 by up to 0.127 and
+pore F1 by up to 0.255** (eight repeats across three seeds, measured in
+[`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 11.7; the single repeat
+section 10 reported, 0.009 / 0.034, was the lucky kind), so read any single
+per-ratio difference in this table as noise unless it recurs across seeds -
+including every per-ratio difference in it.
 
 Two findings, reported as measured:
 
@@ -279,6 +281,26 @@ Two findings, reported as measured:
 > sign flip. Full tables, the split-overlap measurement and limitations:
 > [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 9.
 
+> **Added in v0.5.2: the gain above does not survive a source-frame-grouped
+> split.** The same recommended configuration was rerun end to end at three
+> seeds with `--split_by source`, so that no LoHi-WELD source frame feeds both
+> the training pool and the held-out test set. Its r=1.0 macro-F1 delta is
+> then **-0.0187 ± 0.0252** (per seed +0.0065, -0.0186, -0.0439) and its pore
+> F1 falls at r=1.0 on every seed (**-0.1041** mean); no ratio's three-seed
+> mean is above the real-only baseline on either metric. The real-only
+> baseline itself does not drop (0.7214 ± 0.0265 on unseen frames against
+> 0.6785 ± 0.0447 above), so what the crop-level split was optimistic about is
+> the *augmentation benefit*, not the classifier. Two further reruns qualify
+> the blockquote above: the matched BatchNorm control, now at three seeds,
+> has an r=1.0 delta of only +0.0069 macro-F1 and -0.0338 pore F1, so its
+> single-seed "sign flip" is withdrawn; and GroupNorm without the weighted
+> sampler reproduces the discriminator equilibrium and the reconstruction
+> gain but is the worst pool downstream (-0.0590 at r=1.0, one seed). Full
+> tables, the `--selection best_val` rescoring of the five published sweeps,
+> the two FID scales side by side, and the conference paper's BCE objective on
+> today's code: [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 11.
+> Figure: `results/filling_rate_multiseed_v052.png`.
+
 Figures in `results/`. **Each one belongs to a specific run**, and only the
 first row is regenerable from what this repository ships - the rest need a
 generator checkpoint or per-ratio confusion matrices from the original run
@@ -286,6 +308,7 @@ directories, which are git-ignored (see [Reproducibility](#reproducibility)):
 
 | figure | run it was produced from | regenerable here? |
 |---|---|---|
+| `filling_rate_multiseed_v052.png` | the same three-seed sweep against its source-grouped rerun and the three-seed BatchNorm control (v0.5.2 blockquote) | yes, from `results/metrics/` |
 | `filling_rate_multiseed.png` | the three-seed GroupNorm + balanced-sampler sweep above | yes, from `results/metrics/` |
 | `filling_rate_curve.png` | the published v0.2.0 single-seed sweep (`runs/sweep`) | yes, from `results/metrics/` |
 | `confusion_matrices.png` (r=0 vs r=1), `class_distribution.png` | the published v0.2.0 sweep | yes, from `results/metrics/` |
@@ -293,7 +316,7 @@ directories, which are git-ignored (see [Reproducibility](#reproducibility)):
 | `reconstruction_comparison.png`, `latent_tsne.png` | the published v0.2.0 generator (`runs/joint_lohi`) | needs that checkpoint |
 | `real_vs_generated.png`, `class_*.png` | the recommended `runs/paper2_gn_wrs` generator | needs that checkpoint |
 
-Reproduce commands for the first and last rows: `docs/CALIBRATION.md` section 9.
+Reproduce commands: `docs/CALIBRATION.md` section 11 for the first row, section 9 for the second and last rows.
 The raw metric exports behind these figures (sweep and training-history CSVs)
 are published under [`results/metrics/`](results/metrics/README.md), one
 subdirectory per run name, so the CSV-only figures reproduce without the
@@ -307,8 +330,8 @@ What ships in this repository, and what does not:
 |---|---|---|
 | every metric behind every published number | yes, `results/metrics/` | the tables can be checked without a GPU |
 | per-ratio confusion matrices (`cm_r*.npy`) | yes, `results/metrics/` | `confusion_matrices.png` redraws without retraining |
-| generator checkpoints (`joint.pt`) | no, too large for git | published as assets on the Zenodo record; otherwise retrain |
-| generated image pools | no | regenerate from a checkpoint with `src/generate.py` |
+| generator checkpoints (`joint.pt`) | not in git, too large | all eleven behind the figures and the section 9 and 11 sweeps are attached to the Zenodo record, SHA-256 listed in [`release_assets/MANIFEST.md`](release_assets/MANIFEST.md); otherwise retrain |
+| generated image pools | not in git | the twelve sweep and showcase pools are attached to the Zenodo record as zips (same manifest); or regenerate from a checkpoint with `src/generate.py` |
 | LoHi-WELD itself | no | download it and run `src/prepare_yolo_crops.py` |
 
 Exact environment: `requirements.txt` gives the supported ranges and
@@ -320,8 +343,16 @@ GPU results are not bit-reproducible even at a fixed seed
 
 The band is ±1 sample standard deviation over the three seeds; `n=2` marks
 r=0.25, where the seed-42 arm is excluded for a final-epoch loss spike. The
-figure supports the r=1.0 reading, not a ratio-by-ratio ranking of the three
-configurations.
+figure supports the r=1.0 reading on the crop-level split, not a
+ratio-by-ratio ranking of the three configurations.
+
+![Crop-level versus source-grouped split, three seeds each](results/filling_rate_multiseed_v052.png)
+
+The v0.5.2 figure adds the same arm under the source-grouped split (red) and
+the BatchNorm control at three seeds (cyan). Only the crop-level curve rises
+clearly above its own real-only baseline at r=1.0 on both panels; the control
+is +0.0069 macro-F1 and negative for pore there, and the source-grouped curve
+is negative on both.
 
 **Committed LoHi-WELD showcase.** Qualitative examples from the recommended
 generator, `runs/paper2_gn_wrs/joint.pt`. Per-class FID on the close-ups is an
@@ -357,7 +388,7 @@ If this re-implementation helps your work, cite the **original papers** and the
 groups: the reproduced papers plus every dataset's required citations, and the
 implementation-component references (FID, t-SNE, InceptionV3, ResNet-18,
 VGG19). Versioned snapshots of this repository are archived on Zenodo:
-[10.5281/zenodo.22660143](https://doi.org/10.5281/zenodo.22660143).
+[10.5281/zenodo.22645144](https://doi.org/10.5281/zenodo.22645144) (concept DOI, resolves to the latest version).
 
 ```bibtex
 % --- Primary method reference (conference paper being re-implemented) ---

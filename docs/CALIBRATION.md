@@ -717,6 +717,16 @@ Together these measurements rule out the claim that GroupNorm or the weighted
 sampler is *required* for the positive r=1.0 result. They do not estimate either
 switch's separate benefit.
 
+> **Withdrawn in v0.5.2 (section 11.4).** The paragraph above rests on the
+> control's seed 42 alone. At seeds 43 and 44 the same control's r=1.0 deltas
+> are -0.0223 and -0.0248 macro-F1, for a three-seed mean of +0.0069, and its
+> pore F1 falls at r=1.0 on two seeds of three. The control does not
+> reproduce the sign flip, so the sentence "rule out the claim that GroupNorm
+> or the weighted sampler is required" is withdrawn; whether the pair is
+> required is open again. The paragraph is kept as the published record.
+> Section 11.5 further reports that the recommended arm's own r=1.0 gain does
+> not survive a source-frame-grouped split.
+
 **The seed-42 r=0.25 arm is excluded from the aggregate, not declared invalid.**
 That classifier's loss sat at 0.0001 by epoch 90, then reported 0.2617 at epoch
 100, and `train_classifier.py` in that sweep scored the final epoch (section 10;
@@ -1047,7 +1057,10 @@ has no equivalent flag at all, so generator runs cannot opt in.) The loss curves
 **The measured spread is the noise floor for this benchmark.** On 61 pore test
 images, one repeat of an unchanged configuration moved pore F1 by **0.034** and
 macro-F1 by **0.009**. Any single-seed difference smaller than that is not
-evidence, in either direction. That is granular because the minority class has
+evidence, in either direction. (**Superseded in v0.5.2**: with eight repeats
+of the real-only arm across three seeds, section 11.7 measures the spread at
+up to 0.127 macro-F1 and 0.255 pore F1; the pair quoted here was a lucky
+one. The README now quotes the section 11.7 figures.) That is granular because the minority class has
 only 61 test images: one image is worth ~0.016 of pore recall on its own. These
 two figures are now quoted in `README.md` beside the filling-rate table, which
 is where a reader meets the per-ratio differences they bound. (Earlier releases
@@ -1096,3 +1109,600 @@ python src/train_classifier.py --data_root data/lohi --gen_root generated \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
   --ratios "0.0" --channels 3 --epochs 100 --seed 42 --out_dir runs/noise_a
 ```
+
+## 11. Post-v0.5.1 additional measurements
+
+Everything in this section was measured after v0.5.1, on the code at tag
+`v0.5.2`, with the recorded commands below. It is **additive**: sections 9 and
+10 and both README tables are kept exactly as published, and nothing here
+replaces a number in them. Six questions those sections left open are answered
+here, each by a run that did not previously exist:
+
+| arm | question | runs |
+|---|---|---|
+| D0 | what the published pools score under the current default `pytorch_fid` backend, so the two FID scales can be placed side by side once | `results/metrics/fid_cross_scale.csv` |
+| D5 | whether the conference paper's BCE objective still fails on today's code and this dataset, rather than only in the section 6 RIAWELC record | `runs/bce_nosn_g0.1`, `runs/bce_nosn_g1.0` |
+| D2 | GroupNorm **without** the weighted sampler, separating the two switches section 9 changed together | `runs/paper2_gn_only`, `runs/sweep_gn_only` |
+| D3 | the matched BatchNorm control at seeds 43 and 44, so it has a three-seed mean like the GroupNorm arm | `runs/probe_eq_g0.1_s43`, `_s44`, `runs/sweep_ctrl_s43`, `_s44` |
+| D4 | the recommended arm under `--split_by source`, three seeds: how much of the downstream result survives when no test crop shares a source frame with training | `runs/paper2_src_s42`, `_s43`, `_s44`, `runs/sweep_src_s4x` |
+| D1 | the five published sweeps rescored under `--selection best_val`, the current default, from their own pools | `runs/sweep_*_bestval` |
+
+Every metric export is under `results/metrics/<run>/` (`SHA256SUMS` covers
+them), so each table below recomputes from the committed CSVs without a GPU.
+Section 10's noise floor still bounds every single-seed difference here: pore
+F1 moved 0.034 and macro-F1 0.009 on one repeat of an unchanged arm.
+
+
+### 11.1 The two FID scales, side by side (D0)
+
+Every `fid` column in `results/metrics/` and every FID quoted in sections 2,
+5, 6 and 9 is on the `--fid_backend legacy` (torchvision InceptionV3) scale,
+because all of those runs predate v0.4.0's switch to pytorch-fid as the default.
+The two scales were never placed next to each other on the same images. This
+does that once, with `src/eval_fid.py` on the six pools behind the published
+tables and figures: both backends see the same class-balanced sample (300 per
+class over the classes present on both sides, drawn with the script's fixed
+seed), so the pair differs only in the Inception weights.
+
+| pool | generator | classes compared | `legacy` | `pytorch_fid` |
+|---|---|---|---|---|
+| `generated` (v0.2.0) | `runs/joint_lohi` | 4 | 220.70 | 278.62 |
+| `generated_ctrl` | `runs/probe_eq_g0.1` | 3 | 160.69 | 274.15 |
+| `generated_paper2` | `runs/paper2_gn_wrs` | 3 | 213.23 | 284.27 |
+| `generated_paper2_s43` | `runs/paper2_gn_wrs_s43` | 3 | 185.36 | 232.67 |
+| `generated_paper2_s44` | `runs/paper2_gn_wrs_s44` | 3 | 243.73 | 360.61 |
+| `generated_showcase` | `runs/paper2_gn_wrs` | 4 | 216.38 | 283.65 |
+
+Per-class, on the showcase pool against every seed-42 train-pool crop of the
+class (the `make_class_figures.py` protocol):
+
+| class | real crops | `legacy` | `pytorch_fid` |
+|---|---|---|---|
+| deposit | 954 | 198.82 | 268.48 |
+| discontinuity | 2,380 | 224.86 | 290.16 |
+| pore | 243 | 185.87 | 295.86 |
+| stain | 2,832 | 222.45 | 306.36 |
+
+Three things follow. The `pytorch_fid` numbers are higher throughout, by a
+factor that is not constant (1.26x to 1.71x on the pool rows), so there is no
+conversion between the scales and none is offered. The *ordering* of the pools
+is not preserved either: on the legacy scale the BatchNorm control is the best
+pool by a wide margin (160.69), on pytorch-fid it sits between the three
+GroupNorm seeds. And the per-class ranking flips - pore is the best class on
+one backend and the second-worst on the other. So "FID is a diagnostic, not an
+acceptance criterion" (section 6) is not only about the papers' numbers: two
+Inception weight sets disagree about which of this repo's own pools is better.
+Any FID comparison in this repository has to name its backend, and the
+committed showcase figures are on the legacy scale: regenerating them with
+`--fid_backend legacy` reproduces all four `results/class_*.png` pixel for
+pixel, which also pins the pool and the figure pipeline to the published
+checkpoint.
+
+Source: `results/metrics/fid_cross_scale.csv`, one row per pool, backend and
+scope, with the real reference each row used.
+
+### 11.2 The conference paper's objective on today's code (D5)
+
+Section 6 rejected the conference paper's BCE minimax objective on the
+evidence of one RIAWELC run made before `--adv_loss` existed, and `docs/USAGE.md`
+has since told readers to "expect it to fail". With the switch in place the
+claim can be checked on this dataset and this code: `--adv_loss bce
+--no_d_spectral_norm` is the conference configuration, run for 20 epochs at
+seed 42 with every other flag equal to the section 9 BatchNorm control
+(`runs/probe_eq_g0.1`), once at the papers' own gamma = 1.0 and once at this
+repository's 0.1. Twenty epochs is a diagnostic budget, not the 70-epoch
+protocol; the comparison rows are the first 20 epochs of the two published
+hinge runs. `loss_g` is the adversarial generator term alone.
+
+| arm (20 epochs) | objective | D norm | gamma | best `val_recon` | epochs below 0.0556 / 0.0339 | `loss_g` median | `loss_d` median | `kl x 128`, last 5 | FID ep5 -> ep20 |
+|---|---|---|---|---|---|---|---|---|---|
+| `bce_nosn_g1.0` (new) | BCE, no SN | batch | **1.0** | 0.0774 (ep6) | **0 / 0** | **2.97** | 0.41 | **2.5** | 300.3 -> 321.0 |
+| `bce_nosn_g0.1` (new) | BCE, no SN | batch | 0.1 | 0.0464 (ep17) | 3 / 0 | 0.38 | 0.51 | 18.6 | 290.3 -> 282.0 |
+| `probe_eq_g0.1`, first 20 | hinge + SN | batch | 0.1 | 0.0560 (ep13) | 0 / 0 | 0.30 | 0.70 | 15.0 | 324.0 -> 289.2 |
+| `paper2_gn_wrs`, first 20 | hinge + SN | group | 0.1 | **0.0207** (ep19) | **19 / 14** | 0.05 | 2.00 | 9.8 | 251.5 -> 213.9 |
+
+At the papers' gamma the section 6 failure reproduces on today's code and on
+LoHi-WELD, mechanism included: the unbounded generator term sits at a median
+of 2.97 against a reconstruction term of about 0.13, some 20x, the
+discriminator saturates (`loss_d` falls to 0.16 at epoch 9), the KL term
+collapses to `kl x 128` = 2.5 - the posterior-collapse signature section 1
+looked for and did not find in the hinge runs - and validation reconstruction
+never gets under the constant-mean anchor; the best checkpoint is epoch 1.
+That is what "BCE fails at this data scale" means, and it is now a
+reproducible statement rather than a historical one.
+
+At gamma = 0.1 it is a different picture, and section 6 should not be read as
+covering it. The adversarial term is bounded in practice by the small weight
+(median 0.38, about 6x reconstruction), the discriminator wins but does not
+saturate, and reconstruction reaches 0.0464 - under the constant-mean anchor on
+three epochs of twenty. Over the same first 20 epochs the hinge BatchNorm
+control is no better (0.0560, never under the anchor); at this budget the two
+objectives are indistinguishable on reconstruction, and the arm that is
+different is the GroupNorm one (0.0207, under the stricter anchor on 14
+epochs). So at this data scale the objective matters at the papers' gamma and
+the discriminator normalisation matters at this repository's gamma. Whether
+BCE at gamma 0.1 would reach the hinge control's 70-epoch 0.0332 was not run,
+and neither BCE arm was taken to a pool or a sweep; both would be needed
+before saying anything about BCE downstream.
+
+### 11.3 GroupNorm alone: the equilibrium and most of the reconstruction gain are its (D2)
+
+Section 9 changed `--d_norm group` and `--weighted_sampler` together and said so
+(qualification 1). `runs/paper2_gn_only` is the missing arm: identical to
+`runs/paper2_gn_wrs` in every flag except that the sampler is off, seed 42,
+70 epochs, so the three runs form a ladder BatchNorm -> GroupNorm -> GroupNorm +
+sampler. Recomputed from the three committed histories:
+
+| metric | BatchNorm control (`probe_eq_g0.1`) | GroupNorm only (`paper2_gn_only`, new) | GroupNorm + sampler (`paper2_gn_wrs`) |
+|---|---|---|---|
+| `loss_d` median | 0.819 | **2.001** | 1.998 |
+| `loss_d` range | 0.400 - 2.410 | 1.978 - 2.259 | 1.958 - 2.278 |
+| epochs with `loss_d` below 1.5 | 97% | **0%** | 0% |
+| best `val_recon` | 0.033214 (ep69) | **0.018456** (ep44) | 0.017675 (ep60) |
+| `val_recon` at the checkpointed epoch | 0.033214 (ep69) | 0.018487 (ep66) | 0.017675 (ep60) |
+| train recon, mean of last 10 epochs | 0.0398 | 0.0240 | 0.0234 |
+| FID first -> last (legacy scale) | 324.0 -> 186.9 | 228.8 -> 167.5 | 251.5 -> 216.5 |
+| FID minimum | 142.3 | **141.8** | 191.9 |
+
+Two of section 9's open readings close. The discriminator equilibrium at 2.0
+**is** the GroupNorm effect: with the sampler off the hinge loss still sits at
+a median of 2.001 with no epoch below 1.5, so the batch-statistics mechanism
+section 9 proposed needs nothing from the sampler. And the reconstruction gain
+is almost entirely GroupNorm's as well: 0.0332 -> 0.0185 from the
+normalisation change alone, then 0.0185 -> 0.0177 from adding the sampler,
+the second step being of the order of the epoch-to-epoch wobble of one run and
+not a measured benefit. What the sampler does buy on this axis is nothing;
+what it costs is FID: the GroupNorm-only run reaches a minimum of 141.8, level
+with the BatchNorm control and 50 points under the recommended arm's 191.9.
+So the "FID got worse while reconstruction got better" divergence of section 9
+belongs to the sampler, not to GroupNorm. One seed, legacy scale (as every
+in-training FID here is), and FID remains a diagnostic rather than a criterion;
+but the direction is not small.
+
+Downstream, the picture inverts. `runs/sweep_gn_only` is the same sweep as
+`runs/sweep_paper2_s42` pointed at the new pool (`generated_gn_only`, seed 42,
+`--selection final`), and every synthetic ratio scores **below** its own
+real-only baseline:
+
+macro-F1, gains in brackets over the same column's r=0:
+
+| ratio | BatchNorm control (`sweep_ctrl_s42_clean`) | GroupNorm only (`sweep_gn_only`, new) | GroupNorm + sampler, seed 42 (`sweep_paper2_s42`) | GroupNorm + sampler, 3 seeds |
+|---|---|---|---|---|
+| 0.00 (real only) | 0.6332 | 0.7106 | 0.6848 | 0.6785 ± 0.0447 |
+| 0.25 | 0.7123 (+0.0791) | 0.6949 (-0.0156) | excluded | 0.7419 ± 0.0181 (+0.0665) (n=2) |
+| 0.50 | 0.6341 (+0.0010) | 0.6803 (-0.0302) | 0.6932 (+0.0085) | 0.7210 ± 0.0246 (+0.0425) |
+| 0.75 | 0.7124 (+0.0793) | 0.6877 (-0.0228) | 0.7102 (+0.0254) | 0.6972 ± 0.0239 (+0.0187) |
+| 1.00 (balance-to-max) | 0.7009 (+0.0677) | **0.6516 (-0.0590)** | 0.7168 (+0.0321) | 0.7185 ± 0.0019 (+0.0399) |
+
+pore F1:
+
+| ratio | BatchNorm control | GroupNorm only (new) | GroupNorm + sampler, seed 42 | GroupNorm + sampler, 3 seeds |
+|---|---|---|---|---|
+| 0.00 | 0.4000 | 0.4400 | 0.3441 | 0.3527 ± 0.0611 |
+| 0.25 | 0.4554 (+0.0554) | 0.4086 (-0.0314) | excluded | 0.5380 ± 0.0695 (+0.1811) (n=2) |
+| 0.50 | 0.2192 (-0.1808) | 0.3908 (-0.0492) | 0.4000 (+0.0559) | 0.4554 ± 0.0480 (+0.1028) |
+| 0.75 | 0.4632 (+0.0632) | 0.4000 (-0.0400) | 0.5055 (+0.1614) | 0.4458 ± 0.0541 (+0.0931) |
+| 1.00 | 0.4222 (+0.0222) | 0.4259 (-0.0141) | 0.5053 (+0.1612) | 0.4658 ± 0.0475 (+0.1132) |
+
+Read with two cautions before drawing the obvious conclusion. First, the
+GroupNorm-only column has the **highest real-only baseline of any seed-42 arm
+in this repository** (0.7106 against 0.6332, 0.6848 and the published
+0.6936), and the r=0 classifier never touches a pool: those four values are
+four runs of the *same* configuration on the same real images at the same
+seed. Their spread, 0.077 macro-F1 and 0.096 pore F1, is the true fixed-seed
+noise floor of this benchmark, and it is far wider than the single repeat
+section 10 measured (0.009 / 0.034). A gain measured against an unusually good
+baseline shrinks by construction, so the negative brackets here are partly
+that. Second, it is one seed. What survives both cautions is this: the pool
+with the best FID of the three (141.8) has the worst r=1.0 score of the three
+(0.6516 against the control's 0.7009 and the recommended arm's 0.7168), and
+the only published arm below it is v0.2.0's latent-32 generator (0.6418). So
+in this repository FID does not predict downstream usefulness even in sign,
+which is the strongest form of section 6's "diagnostic, not a criterion". On the evidence here the weighted sampler is what makes the
+GroupNorm generator's samples *useful* for augmentation, even though it
+costs FID and adds nothing to reconstruction; that reading rests on one seed
+and is stated as such.
+
+### 11.4 The BatchNorm control at three seeds: its r=1.0 gain does not survive (D3)
+
+Section 9 compared a three-seed GroupNorm + sampler arm with a one-seed
+BatchNorm control and listed that asymmetry as the third thing it did not
+establish. `runs/probe_eq_g0.1_s43` and `_s44` are the missing seeds: the
+section 9 control command with `--seed 43` and `--seed 44`, each followed by
+its own pool (`generated_ctrl_s43`, `_s44`) and sweep (`runs/sweep_ctrl_s43`,
+`_s44`, `--selection final`, `--num_workers 4`). The control now has the same
+protocol as the recommended arm - generator, pool and classifier all vary with
+the seed.
+
+Generator side, recomputed from the six committed histories:
+
+| seed | arm | best `val_recon` | `loss_d` median | epochs `loss_d` < 1.5 | FID min |
+|---|---|---|---|---|---|
+| 42 | BatchNorm control | 0.033214 | 0.819 | 97% | 142.3 |
+| 43 | BatchNorm control (new) | 0.041503 | 0.707 | 99% | 171.6 |
+| 44 | BatchNorm control (new) | 0.047160 | 0.527 | 99% | 209.5 |
+| 42 | GroupNorm + sampler | 0.017675 | 1.998 | 0% | 191.9 |
+| 43 | GroupNorm + sampler | 0.020810 | 1.999 | 0% | 155.4 |
+| 44 | GroupNorm + sampler | 0.016896 | 1.998 | 0% | 191.6 |
+
+The section 9 generator claims hold on every seed, not only the first: the
+BatchNorm discriminator is dominant on all three (median `loss_d` 0.53-0.82,
+97-99% of epochs below 1.5) and the GroupNorm one sits at 2.0 on all three,
+and the recommended arm's reconstruction is roughly twice as good on every
+seed (0.0169-0.0208 against 0.0332-0.0472). FID again does not follow: the
+control's minimum is better on seed 42, worse on 43 and 44.
+
+Downstream, macro-F1, gains over the same column's r=0:
+
+| ratio | control s42 | control s43 (new) | control s44 (new) | control, 3 seeds | GroupNorm + sampler, 3 seeds |
+|---|---|---|---|---|---|
+| 0.00 (real only) | 0.6332 | 0.7584 | 0.7150 | 0.7022 ± 0.0636 | 0.6785 ± 0.0447 |
+| 0.25 | 0.7123 (+0.0791) | 0.7259 (-0.0325) | 0.7347 (+0.0197) | 0.7243 ± 0.0113 (+0.0221) | 0.7419 ± 0.0181 (+0.0665) (n=2) |
+| 0.50 | 0.6341 (+0.0010) | 0.7407 (-0.0177) | 0.7283 (+0.0133) | 0.7011 ± 0.0583 (-0.0011) | 0.7210 ± 0.0246 (+0.0425) |
+| 0.75 | 0.7124 (+0.0793) | 0.7277 (-0.0307) | 0.7211 (+0.0061) | 0.7204 ± 0.0077 (+0.0182) | 0.6972 ± 0.0239 (+0.0187) |
+| 1.00 (balance-to-max) | 0.7009 (+0.0677) | 0.7361 (-0.0223) | 0.6902 (-0.0248) | **0.7091 ± 0.0240 (+0.0069)** | **0.7185 ± 0.0019 (+0.0399)** |
+
+pore F1:
+
+| ratio | control s42 | control s43 (new) | control s44 (new) | control, 3 seeds | GroupNorm + sampler, 3 seeds |
+|---|---|---|---|---|---|
+| 0.00 | 0.4000 | 0.5510 | 0.4176 | 0.4562 ± 0.0826 | 0.3527 ± 0.0611 |
+| 0.25 | 0.4554 (+0.0554) | 0.5053 (-0.0458) | 0.4583 (+0.0408) | 0.4730 ± 0.0280 (+0.0168) | 0.5380 ± 0.0695 (+0.1811) (n=2) |
+| 0.50 | 0.2192 (-0.1808) | 0.5490 (-0.0020) | 0.4255 (+0.0079) | 0.3979 ± 0.1666 (-0.0583) | 0.4554 ± 0.0480 (+0.1028) |
+| 0.75 | 0.4632 (+0.0632) | 0.4902 (-0.0608) | 0.3913 (-0.0263) | 0.4482 ± 0.0511 (-0.0080) | 0.4458 ± 0.0541 (+0.0931) |
+| 1.00 | 0.4222 (+0.0222) | 0.4865 (-0.0645) | 0.3585 (-0.0591) | **0.4224 ± 0.0640 (-0.0338)** | **0.4658 ± 0.0475 (+0.1132)** |
+
+**Section 9's control sentence is withdrawn.** It read: "The matched BatchNorm
+control preserves the central sign flip ... Together these measurements rule
+out the claim that GroupNorm or the weighted sampler is *required* for the
+positive r=1.0 result." That rested on seed 42 alone, and seed 42 turns out to
+be the control's one good seed: its per-seed r=1.0 macro-F1 deltas are +0.0677,
+-0.0223 and -0.0248, for a mean of +0.0069, and its pore F1 falls at r=1.0
+on two seeds of three for a mean of -0.0338. The recommended arm's +0.0399 /
++0.1132 at r=1.0 therefore stands *without* a BatchNorm counterpart, and
+whether the GroupNorm + sampler pair is required for the r=1.0 gain is back
+to being open - what the three seeds show is that the control does not
+reproduce it, not that the pair causes it (section 11.3 shows GroupNorm alone
+does not either, on one seed). Two things do survive for the control: r=0.25
+is positive on two seeds of three and in the mean (+0.0221), and its
+three-seed real-only baseline (0.7022) is *higher* than the recommended arm's
+(0.6785) even though the r=0 classifier never sees a generator, which is the
+fixed-seed noise floor of section 11.7 again and a reminder that the two
+arms' absolute rows are not on a common footing; only the within-column gains
+are.
+
+### 11.5 The source-grouped split: the downstream gain does not survive (D4)
+
+This is the measurement section 9's split-overlap audit asked for. The
+recommended arm was rerun end to end - generator, pool, sweep - at seeds 42,
+43 and 44 with `--split_by source` on every step, so that no LoHi-WELD source
+frame contributes crops to both the train pool and the held-out test set
+(`src/measure_split_overlap.py --split_by source` reports 0 shared crops and 0
+shared frames on all three seeds). Everything else is the section 9 command
+line, with one forced change: `--val_per_class 190` instead of 200, because
+under frame grouping the seed-43 pore train pool holds 198 crops after the
+40-image subset is drawn, so a 200-image validation set does not fit; the
+validation and FID reference is therefore 760 images here rather than 800.
+The test sets are 1,623 / 1,635 / 1,633 crops (pore 62 / 66 / 59) - the same
+size as the crop-level 1,603 to within one frame's worth per class - but they
+are *different images* from the crop-level test sets, so absolute rows are
+not comparable across the two protocols; within-column gains are.
+
+The generator does not notice the protocol. All three source-split runs sit at
+the GroupNorm equilibrium (`loss_d` median 1.998-2.002, 0% of epochs below
+1.5) and reach best `val_recon` 0.0158 / 0.0166 / 0.0184, the same band as the
+crop-split seeds (0.0169-0.0208; the validation sets differ, so only the band
+is comparable), with minimum FID 186.5 / 195.3 / 186.1 (legacy scale).
+
+Downstream, macro-F1, gains over the same column's r=0:
+
+| ratio | source s42 | source s43 | source s44 | **source split, 3 seeds** | crop split, 3 seeds (section 9) |
+|---|---|---|---|---|---|
+| 0.00 (real only) | 0.7239 | 0.6937 | 0.7465 | 0.7214 ± 0.0265 | 0.6785 ± 0.0447 |
+| 0.25 | 0.7286 (+0.0046) | 0.7153 (+0.0215) | 0.7032 (-0.0432) | 0.7157 ± 0.0127 (-0.0057) | 0.7419 ± 0.0181 (+0.0665) (n=2) |
+| 0.50 | 0.6946 (-0.0293) | 0.6696 (-0.0241) | 0.6896 (-0.0569) | 0.6846 ± 0.0132 (-0.0368) | 0.7210 ± 0.0246 (+0.0425) |
+| 0.75 | 0.7157 (-0.0083) | 0.6677 (-0.0261) | 0.6834 (-0.0631) | 0.6889 ± 0.0245 (-0.0325) | 0.6972 ± 0.0239 (+0.0187) |
+| 1.00 (balance-to-max) | 0.7305 (+0.0065) | 0.6751 (-0.0186) | 0.7026 (-0.0439) | **0.7027 ± 0.0277 (-0.0187)** | **0.7185 ± 0.0019 (+0.0399)** |
+
+pore F1:
+
+| ratio | source s42 | source s43 | source s44 | **source split, 3 seeds** | crop split, 3 seeds (section 9) |
+|---|---|---|---|---|---|
+| 0.00 | 0.5600 | 0.4040 | 0.5983 | 0.5208 ± 0.1029 | 0.3527 ± 0.0611 |
+| 0.25 | 0.4848 (-0.0752) | 0.5200 (+0.1160) | 0.3951 (-0.2032) | 0.4666 ± 0.0644 (-0.0541) | 0.5380 ± 0.0695 (+0.1811) (n=2) |
+| 0.50 | 0.3913 (-0.1687) | 0.3409 (-0.0631) | 0.3902 (-0.2080) | 0.3742 ± 0.0288 (-0.1466) | 0.4554 ± 0.0480 (+0.1028) |
+| 0.75 | 0.4471 (-0.1129) | 0.4176 (+0.0135) | 0.3448 (-0.2535) | 0.4032 ± 0.0526 (-0.1176) | 0.4458 ± 0.0541 (+0.0931) |
+| 1.00 | 0.4944 (-0.0656) | 0.3371 (-0.0670) | 0.4186 (-0.1797) | **0.4167 ± 0.0787 (-0.1041)** | **0.4658 ± 0.0475 (+0.1132)** |
+
+**The two questions this arm was run to answer.**
+
+*How much do the absolute numbers drop?* They do not. The source-split
+real-only baseline is 0.7214 ± 0.0265 macro-F1 and 0.5208 ± 0.1029 pore F1,
+against 0.6785 ± 0.0447 and 0.3527 ± 0.0611 on the crop split. So the
+expectation section 9 and `docs/USAGE.md` stated - that crop-level numbers
+are "optimistic about generalisation to unseen sources" - is not what the
+measurement shows for the *real-only* classifier: a from-scratch ResNet-18
+trained on 1,090 real crops scores as well on unseen frames as on seen ones
+(the two test sets differ, so this is a comparison of bands, not of rows,
+and the pore column has 59-66 test images). What the crop split was
+optimistic about is the next question.
+
+*Does the r=1.0 gain survive?* **No.** With source frames isolated, the
+recommended arm's r=1.0 macro-F1 delta is +0.0065, -0.0186 and -0.0439 on the
+three seeds (mean -0.0187), and its pore F1 falls at r=1.0 on **every** seed
+(-0.0656, -0.0670, -0.1797; mean -0.1041). Every ratio's three-seed mean is at
+or below the real-only baseline on both metrics; the only individual positive
+cells are seed 42's +0.0046 / +0.0065 macro-F1 at r=0.25 / r=1.0 and seed 43's
+r=0.25 (+0.0215 macro-F1, +0.1160 pore F1), none of which recurs on another
+seed. The section 9 result - "+0.0399 macro-F1 and +0.1132 pore F1 at r=1.0,
+a positive mean effect" - is therefore a property of the crop-level split,
+under which a generator trained on crops of the test frames produces samples
+that help a classifier on those same frames. Isolating the frames removes the
+help and leaves a cost to the minority class.
+
+This is the single most consequential measurement in this file, and it is
+stated with its limits: three seeds, one dataset, one classifier, one
+generator configuration (the recommended one; the BatchNorm control and the
+GroupNorm-only arm were not rerun under the source split), the fixed-seed
+noise floor of section 11.7 (which is wide enough to absorb any one of these
+cells but not the sign of eight of the nine pore deltas at r >= 0.5, the ninth
+being seed 43's +0.0135 at r=0.75), and the
+760-image validation set the generator was checkpointed on. Within those
+limits the reading is: **on LoHi-WELD, the measured augmentation benefit of
+this re-implementation does not generalise to unseen source frames.** The
+README's three-seed blockquote and the section 9 tables remain correct
+statements about the crop-level protocol, and are kept; they should no longer
+be read as evidence that the method helps on new welds.
+
+### 11.6 The published sweeps rescored under `--selection best_val` (D1)
+
+Section 10 asked what happens when the five published sweeps are scored under
+the current default, `--selection best_val`, instead of the final-epoch
+protocol behind every published table. The five were rerun from their own
+pools with only that flag changed (`runs/sweep_paper2_s42_bestval`, `_s43_`,
+`_s44_`, `runs/sweep_ctrl_s42_bestval`, `runs/sweep_v020_bestval`; the last
+uses the v0.2.0 `generated` pool and the v0.2.0 configuration). Because the
+classifier is not bit-reproducible (section 10, cause 1), each of these is a
+fresh training run as well as a different scoring rule, so the comparison
+below is protocol *plus* one repeat's noise; section 11.7 says how large that
+noise is.
+
+macro-F1, gains over the same column's r=0:
+
+| ratio | v0.2.0, `final` (published) | v0.2.0, `best_val` | control s42, `final` | control s42, `best_val` | GroupNorm + sampler, 3 seeds, `final` | GroupNorm + sampler, 3 seeds, `best_val` |
+|---|---|---|---|---|---|---|
+| 0.00 (real only) | 0.6936 | 0.6760 | 0.6332 | 0.6056 | 0.6785 ± 0.0447 | 0.6495 ± 0.0591 |
+| 0.25 | 0.7264 (+0.0327) | 0.6914 (+0.0154) | 0.7123 (+0.0791) | 0.6497 (+0.0440) | 0.7419 ± 0.0181 (+0.0665) (n=2) | 0.6415 ± 0.0596 (-0.0080) |
+| 0.50 | 0.6767 (-0.0169) | 0.6171 (-0.0588) | 0.6341 (+0.0010) | 0.6779 (+0.0723) | 0.7210 ± 0.0246 (+0.0425) | 0.6648 ± 0.0372 (+0.0152) |
+| 0.75 | 0.7029 (+0.0093) | 0.6130 (-0.0630) | 0.7124 (+0.0793) | 0.6351 (+0.0295) | 0.6972 ± 0.0239 (+0.0187) | 0.6835 ± 0.0260 (+0.0339) |
+| 1.00 (balance-to-max) | 0.6418 (-0.0518) | **0.7086 (+0.0326)** | 0.7009 (+0.0677) | 0.6747 (+0.0691) | 0.7185 ± 0.0019 (+0.0399) | **0.6537 ± 0.0583 (+0.0041)** |
+
+pore F1:
+
+| ratio | v0.2.0, `final` | v0.2.0, `best_val` | control s42, `final` | control s42, `best_val` | GroupNorm + sampler, 3 seeds, `final` | GroupNorm + sampler, 3 seeds, `best_val` |
+|---|---|---|---|---|---|---|
+| 0.00 | 0.3778 | 0.3878 | 0.4000 | 0.2254 | 0.3527 ± 0.0611 | 0.3107 ± 0.1680 |
+| 0.25 | 0.4731 (+0.0953) | 0.4082 (+0.0204) | 0.4554 (+0.0554) | 0.3333 (+0.1080) | 0.5380 ± 0.0695 (+0.1811) (n=2) | 0.3287 ± 0.1970 (+0.0180) |
+| 0.50 | 0.3590 (-0.0188) | 0.2637 (-0.1240) | 0.2192 (-0.1808) | 0.4211 (+0.1957) | 0.4554 ± 0.0480 (+0.1028) | 0.3448 ± 0.1099 (+0.0341) |
+| 0.75 | 0.4902 (+0.1124) | 0.1905 (-0.1973) | 0.4632 (+0.0632) | 0.2857 (+0.0604) | 0.4458 ± 0.0541 (+0.0931) | 0.4446 ± 0.0572 (+0.1339) |
+| 1.00 | 0.3871 (+0.0093) | 0.4719 (+0.0842) | 0.4222 (+0.0222) | 0.3373 (+0.1120) | 0.4658 ± 0.0475 (+0.1132) | 0.3341 ± 0.1100 (+0.0234) |
+
+Per seed, the recommended arm under `best_val` (its `final` value in
+brackets): r=1.0 macro-F1 deltas +0.0036 (+0.0321), +0.0072 (+0.0895),
++0.0016 (-0.0018); pore F1 deltas +0.1127 (+0.1612), -0.0203 (+0.1829),
+-0.0223 (-0.0045). The seed-42 r=0.25 arm, excluded in section 9 for its
+final-epoch loss spike, scores 0.6043 macro-F1 under `best_val` against a
+0.5885 real-only baseline for that run - no longer an outlier relative to its
+own column, so the exclusion was a property of the final-epoch protocol and
+does not carry over.
+
+**Three things this establishes.**
+
+1. *The conclusions depend on the scoring protocol.* Under `best_val` the
+   recommended arm's r=1.0 gain shrinks from +0.0399 to +0.0041 macro-F1 (a
+   value the noise floor swallows, though its sign is the same on all three
+   seeds) and from +0.1132 to +0.0234 pore F1 (positive on one seed of
+   three); the published v0.2.0 curve's "r=1.0 is the worst ratio" becomes
+   "r=1.0 is the best ratio" (+0.0326); and the control's r=1.0 gain is
+   unchanged (+0.0691 against +0.0677). No reading that depends on which
+   ratio is best survives a change of protocol.
+2. *`best_val` is not the better protocol here; it is a different one.* In
+   all 25 rescored arms it restored an epoch between 6 and 24 of 100. The
+   leftover-pool validation loss bottoms out early and then climbs past 1.0
+   as the classifier fits its 1,090 real images, while the held-out test
+   score keeps improving, so `best_val` scores an under-trained classifier:
+   every `best_val` real-only baseline is below its `final` counterpart
+   (0.6495 vs 0.6785, 0.6056 vs 0.6332, 0.6760 vs 0.6936). It also selects
+   on a pool the generator was early-stopped on (`docs/USAGE.md`, limitations),
+   so it trades the final-epoch protocol's exposure to late loss spikes for
+   a soft optimistic bias and a systematic under-training. Neither protocol
+   is a clean estimate; a selection pool disjoint from the generator's
+   validation set, or a fixed schedule with more seeds, would be, and neither
+   was run.
+3. *The current default should be read as a change of protocol, not a fix.*
+   v0.4.0 made `best_val` the default on the argument that a late spike should
+   not define a reported number. That argument stands, but this rescoring
+   shows the default also moves every absolute number down and every gain
+   toward zero. Tables produced with the default are not comparable to the
+   published ones, and `--selection final` remains the flag that reproduces
+   them.
+
+### 11.7 The fixed-seed noise floor, remeasured: 0.08-0.13 macro-F1, not 0.009
+
+Section 10 quoted a noise floor of 0.009 macro-F1 and 0.034 pore F1 from one
+repeat of the r=0 arm. The r=0 arm never touches a generated pool, so every
+sweep in this repository at the same seed and split protocol is a further
+repeat of exactly that configuration - same 1,090 real images, same test set,
+same classifier, same seed, `--selection final` - and there are now enough
+of them to measure the spread properly:
+
+| seed, split | run | accuracy | macro-F1 | pore F1 |
+|---|---|---|---|---|
+| 42, crop | `sweep` (v0.2.0, published) | 0.8222 | 0.6936 | 0.3778 |
+| 42, crop | `sweep_paper2_s42` | 0.8253 | 0.6848 | 0.3441 |
+| 42, crop | `sweep_ctrl_s42_clean` (`--num_workers 0`) | 0.7867 | 0.6332 | 0.4000 |
+| 42, crop | `sweep_gn_only` (new) | 0.8235 | 0.7106 | 0.4400 |
+| 43, crop | `sweep_paper2_s43` | 0.7860 | 0.6311 | 0.2963 |
+| 43, crop | `sweep_ctrl_s43` (new) | 0.8497 | 0.7584 | 0.5510 |
+| 44, crop | `sweep_paper2_s44` | 0.8571 | 0.7198 | 0.4176 |
+| 44, crop | `sweep_ctrl_s44` (new) | 0.8497 | 0.7150 | 0.4176 |
+
+Spread between repeats of the identical configuration: **0.0774 macro-F1 and
+0.0959 pore F1 at seed 42 (four runs), 0.1273 and 0.2547 at seed 43 (two
+runs), 0.0048 and 0.0000 at seed 44 (two runs).** Section 10's pair was the
+lucky kind. The mechanism is the one section 10 named - non-deterministic CUDA
+kernels, 100 epochs at a constant learning rate with no schedule, and a
+61-image minority class in the test set - but its magnitude is an order of
+magnitude larger than was published, and it is the bound every single-seed
+difference in sections 9, 10 and 11 has to clear. In particular the section 9
+seed-42 control's +0.0677 at r=1.0, the section 11.3 GroupNorm-only -0.0590,
+and every individual cell of section 11.6 are inside it. What is *not* inside
+it is a sign that repeats across seeds and ratios, which is why section 11.5's
+pore result (eight of nine negative) and section 11.4's three-seed control
+mean are reported as findings and the single-seed cells are not. The
+`docs/USAGE.md` limitation and the README sentence that quoted the 0.009 /
+0.034 figures now quote these instead.
+
+### 11.8 What section 11 does and does not establish
+
+Established, within the stated limits:
+
+- The discriminator equilibrium at `loss_d` = 2.0 is caused by the GroupNorm
+  discriminator alone; the weighted sampler is not involved (11.3, one seed).
+- Most of the reconstruction gain of the recommended arm is GroupNorm's too;
+  the sampler adds about 0.0008 `val_recon`, below the run-to-run wobble
+  (11.3).
+- The recommended arm's r=1.0 gain on the crop-level split is a property of
+  that split: under source-frame isolation it is -0.0187 macro-F1 and -0.1041
+  pore F1 at three seeds, negative for pore on every seed (11.5).
+- The BatchNorm control does not show an r=1.0 gain at three seeds (+0.0069 /
+  -0.0338); section 9's control sentence is withdrawn (11.4).
+- The downstream conclusions change with the scoring protocol, and
+  `best_val` under-trains (11.6); the fixed-seed noise floor is 0.08-0.13
+  macro-F1, not 0.009 (11.7).
+- The two FID backends disagree about the ranking of this repository's own
+  pools, and the pool with the best legacy FID is the worst downstream
+  (11.1, 11.3).
+- The conference paper's BCE objective on today's code and this data (11.2).
+
+Not established, and not to be read into the above:
+
+- Why the crop-level gain exists. The natural reading - a generator trained
+  on crops of the test frames emits frame-specific detail that helps on those
+  frames - is consistent with 11.5 but was not tested directly (for example
+  by measuring nearest-neighbour distances from generated to test crops).
+- Whether any configuration helps on unseen frames. Only the recommended arm
+  was run under `--split_by source`; the control, the GroupNorm-only arm, the
+  v0.2.0 configuration and filling rates in the 0.1-0.2 region were not.
+- Anything about the papers' data or numbers (section 8).
+- Anything at one seed. Every single-seed cell here sits inside the 11.7
+  noise floor.
+
+### Reproduce
+
+All commands run from the repository root with `data/lohi` prepared as in the
+README. The generator commands are the section 9 ones with the flags shown
+changed; the sweeps add nothing but `--seed`, `--selection` and, for 11.5,
+`--split_by source`. `--num_workers 4` throughout except where noted.
+
+```bash
+# 11.1 cross-scale FID: both backends on the same balanced sample of each pool.
+for POOL in generated generated_ctrl generated_paper2 generated_paper2_s43 \
+            generated_paper2_s44 generated_showcase; do
+  for BE in pytorch_fid legacy; do
+    python src/eval_fid.py --real_root data/lohi --fake_root "$POOL" \
+      --channels 3 --fid_backend "$BE" --batch_size 16
+  done
+done
+# Per-class FID of the showcase pool, into a scratch directory so the committed
+# figures are untouched; --fid_backend legacy reproduces results/class_*.png
+# pixel for pixel.
+python src/make_class_figures.py --real_root data/lohi --gen_root generated_showcase \
+  --out_dir /tmp/classfig_legacy --channels 3 --fid_backend legacy
+
+# 11.2 the conference objective, 20 epochs, gamma 0.1 and 1.0.
+for G in 0.1 1.0; do
+  python src/train_joint.py --data_root data/lohi \
+    --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
+    --epochs 20 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
+    --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight "$G" \
+    --patience 70 --lr_patience 70 --seed 42 --fid_backend legacy \
+    --fid_every 5 --sample_every 10 --adv_loss bce --no_d_spectral_norm \
+    --out_dir "runs/bce_nosn_g$G"
+done
+
+# 11.3 GroupNorm without the sampler: the section 9 recommended command minus
+# --weighted_sampler, then its pool and sweep.
+python src/train_joint.py --data_root data/lohi \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
+  --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
+  --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
+  --patience 70 --lr_patience 70 --seed 42 --d_norm group --fid_backend legacy \
+  --fid_every 5 --sample_every 10 --out_dir runs/paper2_gn_only
+python src/generate.py --ckpt runs/paper2_gn_only/joint.pt --seed 42 \
+  --out_root generated_gn_only --counts "deposit=450,discontinuity=300,pore=560,stain=0"
+python src/train_classifier.py --data_root data/lohi --gen_root generated_gn_only \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+  --channels 3 --seed 42 --selection final --out_dir runs/sweep_gn_only
+
+# 11.4 the BatchNorm control at seeds 43 and 44: the section 9 control command
+# with --seed, then pool and sweep, exactly as for the recommended arm.
+for S in 43 44; do
+  python src/train_joint.py --data_root data/lohi \
+    --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
+    --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
+    --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
+    --patience 70 --lr_patience 70 --seed "$S" --fid_backend legacy \
+    --fid_every 5 --sample_every 10 --out_dir "runs/probe_eq_g0.1_s$S"
+  python src/generate.py --ckpt "runs/probe_eq_g0.1_s$S/joint.pt" --seed "$S" \
+    --out_root "generated_ctrl_s$S" --counts "deposit=450,discontinuity=300,pore=560,stain=0"
+  python src/train_classifier.py --data_root data/lohi --gen_root "generated_ctrl_s$S" \
+    --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
+    --channels 3 --seed "$S" --selection final --out_dir "runs/sweep_ctrl_s$S"
+done
+
+# 11.5 the recommended arm under the source-grouped split, three seeds.
+# --val_per_class 190: the seed-43 pore train pool has 198 crops left after the
+# subset under frame grouping, so the published 200 does not fit.
+for S in 42 43 44; do
+  python src/train_joint.py --data_root data/lohi \
+    --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 190 \
+    --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
+    --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
+    --patience 70 --lr_patience 70 --seed "$S" --d_norm group --weighted_sampler \
+    --split_by source --fid_backend legacy --fid_every 5 --sample_every 10 \
+    --out_dir "runs/paper2_src_s$S"
+  python src/generate.py --ckpt "runs/paper2_src_s$S/joint.pt" --seed "$S" \
+    --out_root "generated_src_s$S" --counts "deposit=450,discontinuity=300,pore=560,stain=0"
+  python src/train_classifier.py --data_root data/lohi --gen_root "generated_src_s$S" \
+    --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
+    --seed "$S" --selection final --split_by source --out_dir "runs/sweep_src_s$S"
+done
+python src/measure_split_overlap.py --data_root data/lohi \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" --seeds 42,43,44 --split_by source
+
+# 11.6 the five published sweeps rescored: same pool, same seed, --selection best_val.
+python src/train_classifier.py --data_root data/lohi --gen_root generated_paper2 \
+  --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
+  --seed 42 --selection best_val --out_dir runs/sweep_paper2_s42_bestval
+#   ... then generated_paper2_s43 / _s44 with --seed 43 / 44, generated_ctrl
+#   with --seed 42 (runs/sweep_ctrl_s42_bestval), and generated with --seed 42
+#   (runs/sweep_v020_bestval).
+
+# The v0.5.2 figure, from the committed CSVs alone.
+python src/make_multiseed_figure.py \
+  --seed_sweep results/metrics/sweep_paper2_s42/sweep_metrics.csv \
+  --seed_sweep results/metrics/sweep_paper2_s43/sweep_metrics.csv \
+  --seed_sweep results/metrics/sweep_paper2_s44/sweep_metrics.csv \
+  --exclude "results/metrics/sweep_paper2_s42/sweep_metrics.csv=0.25" \
+  --label "GroupNorm + balanced sampler, crop-level split (section 9)" \
+  --arm "same arm, source-grouped split (section 11.5)=results/metrics/sweep_src_s42/sweep_metrics.csv;results/metrics/sweep_src_s43/sweep_metrics.csv;results/metrics/sweep_src_s44/sweep_metrics.csv" \
+  --arm "matched BatchNorm control, crop-level split (section 11.4)=results/metrics/sweep_ctrl_s42_clean/sweep_metrics.csv;results/metrics/sweep_ctrl_s43/sweep_metrics.csv;results/metrics/sweep_ctrl_s44/sweep_metrics.csv" \
+  --reference "published v0.2.0, latent-32 BatchNorm (seed 42)=results/metrics/sweep/sweep_metrics.csv" \
+  --title "Filling-rate sensitivity across seeds: crop-level versus source-grouped split (v0.5.2)" \
+  --minority pore --out results/filling_rate_multiseed_v052.png
+```
+
+The generator checkpoints and pools behind every run above are attached to
+the Zenodo record (`release_assets/MANIFEST.md` lists each file and its
+SHA-256), so the sweeps can be repeated without retraining a generator.
