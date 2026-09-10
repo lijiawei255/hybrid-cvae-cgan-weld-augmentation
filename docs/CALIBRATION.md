@@ -1703,6 +1703,8 @@ python src/make_multiseed_figure.py \
   --minority pore --out results/filling_rate_multiseed_v052.png
 ```
 
-The generator checkpoints and pools behind every run above are attached to
-the Zenodo record (`release_assets/MANIFEST.md` lists each file and its
-SHA-256), so the sweeps can be repeated without retraining a generator.
+The generator checkpoints and pools behind every run above are not
+redistributed; `release_assets/MANIFEST.md` records each file's SHA-256 and
+the configuration stored in each checkpoint, so a rerun from the commands
+above can be compared against the originals' fingerprints, but repeating a
+sweep does require retraining its generator.

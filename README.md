@@ -330,8 +330,8 @@ What ships in this repository, and what does not:
 |---|---|---|
 | every metric behind every published number | yes, `results/metrics/` | the tables can be checked without a GPU |
 | per-ratio confusion matrices (`cm_r*.npy`) | yes, `results/metrics/` | `confusion_matrices.png` redraws without retraining |
-| generator checkpoints (`joint.pt`) | not in git, too large | all eleven behind the figures and the section 9 and 11 sweeps are attached to the Zenodo record, SHA-256 listed in [`release_assets/MANIFEST.md`](release_assets/MANIFEST.md); otherwise retrain |
-| generated image pools | not in git | the twelve sweep and showcase pools are attached to the Zenodo record as zips (same manifest); or regenerate from a checkpoint with `src/generate.py` |
+| generator checkpoints (`joint.pt`) | no, not redistributed | retrain with the recorded commands; [`release_assets/MANIFEST.md`](release_assets/MANIFEST.md) lists the SHA-256 and stored configuration of all eleven checkpoints behind the figures and the section 9 and 11 sweeps, so a retrained one can be told apart from the originals |
+| generated image pools | no, not redistributed | regenerate from a checkpoint with `src/generate.py`; the same manifest lists the twelve pools' digests |
 | LoHi-WELD itself | no | download it and run `src/prepare_yolo_crops.py` |
 
 Exact environment: `requirements.txt` gives the supported ranges and
