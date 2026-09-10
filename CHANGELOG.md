@@ -80,10 +80,11 @@ are additive; sections 9 and 10 and both README tables are kept as published.
 - **`CITATION.cff`** credits spectral normalisation (Miyato et al. 2018),
   Sub-Pixel convolution (Shi et al. 2016) and GroupNorm (Wu & He 2018), all
   load-bearing and previously uncited.
-- **Zenodo attachments.** The generator checkpoints and generated pools behind
-  every committed figure and every section 9 and 11 sweep are published on the
-  Zenodo record; `release_assets/MANIFEST.md` lists each file, its SHA-256
-  and the run it belongs to.
+- **`release_assets/MANIFEST.md`** fingerprints the eleven generator
+  checkpoints and twelve generated pools behind every committed figure and
+  every section 9 and 11 sweep: SHA-256, size, the run each belongs to, and
+  the configuration read back from each checkpoint. The files themselves are
+  not redistributed; the manifest lets a rerun be checked against them.
 - README (English and Chinese): shields badge row, Quick facts table, table
   of contents, a Reproducibility table saying what ships and what does not,
   and a Zenodo archive link in the citation section.
@@ -92,7 +93,8 @@ are additive; sections 9 and 10 and both README tables are kept as published.
 
 `docs/CALIBRATION.md` section 11 adds six sets of runs, all additive, with
 their metric exports under `results/metrics/` and their checkpoints and pools
-on the Zenodo record. What they establish, in one line each:
+fingerprinted in `release_assets/MANIFEST.md`. What they establish, in one
+line each:
 
 - **The r=1.0 gain does not survive a source-frame-grouped split** (11.5).
   The recommended arm rerun end to end at three seeds with `--split_by

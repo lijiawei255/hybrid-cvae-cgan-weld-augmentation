@@ -223,8 +223,8 @@ python src/prepare_yolo_crops.py \
 |---|---|---|
 | 每个已发表数字背后的指标 | 是，`results/metrics/` | 无需 GPU 即可核对全部表格 |
 | 逐比例混淆矩阵（`cm_r*.npy`） | 是，`results/metrics/` | `confusion_matrices.png` 无需重训即可重画 |
-| 生成器 checkpoint（`joint.pt`） | 不在 git 里，过大 | 图与第 9、11 节扫描背后的全部 11 个 checkpoint 作为附件挂在 Zenodo 记录上，SHA-256 列于 [`release_assets/MANIFEST.md`](release_assets/MANIFEST.md)；否则需自行重训 |
-| 生成图像池 | 不在 git 里 | 12 个扫描与 showcase 池以 zip 附在 Zenodo 记录上（同一清单）；或用 `src/generate.py` 从 checkpoint 重新生成 |
+| 生成器 checkpoint（`joint.pt`） | 否，不分发 | 按记录的命令自行重训；[`release_assets/MANIFEST.md`](release_assets/MANIFEST.md) 列出图与第 9、11 节扫描背后全部 11 个 checkpoint 的 SHA-256 和内嵌配置，可据此区分重训结果与原件 |
+| 生成图像池 | 否，不分发 | 用 `src/generate.py` 从 checkpoint 重新生成；同一清单列有 12 个池的摘要 |
 | LoHi-WELD 数据本身 | 否 | 自行下载后运行 `src/prepare_yolo_crops.py` |
 
 确切环境：`requirements.txt` 给出受支持的版本范围，`requirements-lock.txt` 钉住产出这些结果时的确切版本。即便固定 seed，GPU 结果也不是逐比特可复现的（[`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 10 节）。

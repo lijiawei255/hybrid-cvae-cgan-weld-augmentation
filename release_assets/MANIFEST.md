@@ -1,17 +1,21 @@
-# Release assets for v0.5.2
+# Artefact manifest for v0.5.2
 
-These files are too large for git and are published as attachments on the
-Zenodo record (concept DOI 10.5281/zenodo.22645144) instead. Together with the
-repository at tag `v0.5.2` they let someone redraw every committed figure and
-re-run every sweep in `docs/CALIBRATION.md` sections 9 and 11 without
-retraining a generator. Every number in those sections was produced from
-exactly these files.
+The generator checkpoints and generated pools behind every committed figure
+and every sweep in `docs/CALIBRATION.md` sections 9 and 11 are too large for
+git and are **not redistributed**. This file records their fingerprints -
+SHA-256, size, the run each belongs to, and the configuration read back from
+each checkpoint - so that a checkpoint or pool produced by rerunning the
+recorded commands can be told apart from the originals, and so that every
+number in those sections is traceable to a specific file. Retraining is the
+only way to obtain equivalent files; because GPU training is not
+bit-reproducible (section 10), a retrained checkpoint will not match these
+digests, and its downstream numbers will differ within the noise floor of
+section 11.7.
 
-Verify a download with `sha256sum -c` against the digests below. Zenodo
-attachments are flat files, so each checkpoint is uploaded as
-`<run>__joint.pt`; rename it to `runs/<run>/joint.pt` after download, which
-is the path every command in `docs/CALIBRATION.md` uses. The digest is of the
-file's bytes, which the rename does not change.
+The digest of a checkpoint is of `runs/<run>/joint.pt` as written by
+`src/train_joint.py`; the digest of a pool is of a deterministic zip of the
+`generate.py` output tree (paths relative to the repository root, fixed
+timestamps, deflate).
 
 ## Generator checkpoints
 
