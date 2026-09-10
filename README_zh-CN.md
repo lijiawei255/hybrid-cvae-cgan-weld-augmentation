@@ -8,7 +8,7 @@
 [![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C.svg)](https://pytorch.org/)
 [![Conference paper DOI](https://img.shields.io/badge/DOI-10.1109%2FCYBER67662.2025.11168313-007EC7.svg)](https://doi.org/10.1109/CYBER67662.2025.11168313)
 [![Journal extension DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.ymssp.2026.114138-007EC7.svg)](https://doi.org/10.1016/j.ymssp.2026.114138)
-[![Zenodo DOI](https://img.shields.io/badge/Zenodo-10.5281%2Fzenodo.22660143-0067A8.svg)](https://doi.org/10.5281/zenodo.22660143)
+[![Zenodo DOI](https://img.shields.io/badge/Zenodo-10.5281%2Fzenodo.22645144-0067A8.svg)](https://doi.org/10.5281/zenodo.22645144)
 [![Status: complete / as-is](https://img.shields.io/badge/status-complete_/_as--is-lightgrey.svg)](CHANGELOG.md)
 
 > **同步声明**：英文版 `README.md` 为规范版本（normative）。本中文版与其保持同步更新；若两者出现不一致，以英文版为准。
@@ -39,8 +39,8 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 | **方法** | 单个联合训练的 hybrid CVAE-CGAN：同一解码器同时是 `D(z, y)` 与 `G(z, y)`；MSE + KL + VGG19 感知 + hinge 对抗（spectral norm） |
 | **数据** | 公开 LoHi-WELD 焊缝裁剪（论文使用专有 WAAM 熔池图像；结果不可比较） |
 | **入口脚本** | `smoke_test.py` -> `train_joint.py` -> `generate.py` -> `train_classifier.py`（+ `eval_fid.py`），均在 `src/` |
-| **主要结果** | balance-to-max（r=1.0）三 seed macro-F1 0.7185 ± 0.0019，较纯真实均值 +0.0399（见[结果](#结果---lohi-weld当前)） |
-| **状态** | 已完成 / 按现状提供；冻结参考实现，v0.5.1（[CHANGELOG](CHANGELOG.md)） |
+| **主要结果** | balance-to-max（r=1.0）三 seed macro-F1 0.7185 ± 0.0019，较纯真实均值 +0.0399，**仅在裁剪级划分下成立**；按源图分组划分后增益不复存在（−0.0187，pore F1 −0.1041，三 seed；见[结果](#结果---lohi-weld当前)） |
+| **状态** | 已完成 / 按现状提供；冻结参考实现，v0.5.2（[CHANGELOG](CHANGELOG.md)） |
 
 ## 目录
 
@@ -169,7 +169,7 @@ python src/prepare_yolo_crops.py \
 | 0.75 | 0.8141 | 0.7029 | 0.8064 | 0.5957 | 0.8977 | **0.4902** | 0.8281 |
 | 1.00（balance-to-max） | 0.7392 | 0.6418 | 0.7403 | 0.6199 | 0.7932 | 0.3871 | 0.7669 |
 
-本节两张表都以 `--selection final` 打分、FID 以 `--fid_backend legacy` 计算；今天的默认值是 `best_val` 与 `pytorch_fid`，是不同的协议和不同的尺度。**在同一 seed 下重跑同一配置，pore F1 会变动 0.034、macro-F1 会变动 0.009**（实测，[`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 10 节），所以任何小于该幅度的逐比例差异都应读作噪声——包括下表 r=0.75 处的 +0.009 macro-F1。
+本节两张表都以 `--selection final` 打分、FID 以 `--fid_backend legacy` 计算；今天的默认值是 `best_val` 与 `pytorch_fid`，是不同的协议和不同的尺度。**在同一 seed 下重跑同一纯真实配置，macro-F1 最多变动 0.127、pore F1 最多变动 0.255**（三个 seed 上共八次重复，实测见 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 11.7 节；第 10 节报告的那一次重复 0.009 / 0.034 只是运气好），所以本表中任何单个逐比例差异，除非在多个 seed 上重复出现，都应读作噪声——包括表中的每一个差异。
 
 两个按实测报告的发现：
 
@@ -186,10 +186,26 @@ python src/prepare_yolo_crops.py \
 > 因此 GroupNorm 和加权采样**不是**符号反转的必要条件。完整表格、划分重叠测量与限制见
 > [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 9 节。
 
+> **v0.5.2 新增：上面的增益在按源图分组的划分下不成立。**
+> 同一推荐配置在三个 seed 上用 `--split_by source` 端到端重跑（生成器、生成池、
+> 扫描），使任何一张 LoHi-WELD 源图都不会同时向训练池和 held-out 测试集供图。
+> 此时 r=1.0 的 macro-F1 增量为 **−0.0187 ± 0.0252**（逐 seed +0.0065、−0.0186、
+> −0.0439），pore F1 在每个 seed 上都于 r=1.0 下降（均值 **−0.1041**）；两项指标
+> 上没有任何比例的三 seed 均值高于纯真实基线。纯真实基线本身并未下降（未见源图上
+> 0.7214 ± 0.0265，对比上文 0.6785 ± 0.0447），所以裁剪级划分乐观的是*增广收益*，
+> 而不是分类器。另外两组重跑修正上一条注记：匹配的 BatchNorm 对照补到三个 seed 后
+> r=1.0 增量只有 +0.0069 macro-F1、pore F1 −0.0338，其单 seed 的"符号反转"撤回；
+> 只开 GroupNorm 不开加权采样能复现判别器均衡和重建增益，但下游是最差的池
+> （r=1.0 −0.0590，单 seed）。完整表格、五组已发表扫描按 `--selection best_val`
+> 的重打分、两种 FID 尺度的并列，以及会议论文 BCE 目标在当前代码上的表现，见
+> [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 11 节。图：
+> `results/filling_rate_multiseed_v052.png`。
+
 `results/` 中的图。**每张图都属于某一次特定运行**，而且只有第一行能仅凭本仓库已提交的内容重画；其余需要生成器 checkpoint 或原始运行目录里的逐比例混淆矩阵，而那些目录被 gitignore（见[可复现性](#可复现性)）：
 
 | 图 | 由哪次运行产出 | 能否在此重画 |
 |---|---|---|
+| `filling_rate_multiseed_v052.png` | 同一三 seed 扫描，对比其源图分组重跑与三 seed BatchNorm 对照（v0.5.2 注记） | 能，仅凭 `results/metrics/` |
 | `filling_rate_multiseed.png` | 上文三 seed GroupNorm + 加权采样扫描 | 能，仅凭 `results/metrics/` |
 | `filling_rate_curve.png` | 已发布的 v0.2.0 单 seed 扫描（`runs/sweep`） | 能，仅凭 `results/metrics/` |
 | `confusion_matrices.png`（r=0 vs r=1）、`class_distribution.png` | 已发布的 v0.2.0 扫描 | 能，仅凭 `results/metrics/` |
@@ -197,7 +213,7 @@ python src/prepare_yolo_crops.py \
 | `reconstruction_comparison.png`、`latent_tsne.png` | 已发布的 v0.2.0 生成器（`runs/joint_lohi`） | 需要该 checkpoint |
 | `real_vs_generated.png`、`class_*.png` | 推荐的 `runs/paper2_gn_wrs` 生成器 | 需要该 checkpoint |
 
-第一行与最后一行的复现命令见 `docs/CALIBRATION.md` 第 9 节。这些图背后的原始指标导出（扫描与训练历史 CSV，以及逐比例混淆矩阵 `cm_r*.npy`）发布在 [`results/metrics/`](results/metrics/README.md) 下，每个运行名一个子目录，因此仅需 CSV 的那些图无需原始运行目录即可复现。
+复现命令：第一行见 `docs/CALIBRATION.md` 第 11 节，第二行与最后一行见第 9 节。这些图背后的原始指标导出（扫描与训练历史 CSV，以及逐比例混淆矩阵 `cm_r*.npy`）发布在 [`results/metrics/`](results/metrics/README.md) 下，每个运行名一个子目录，因此仅需 CSV 的那些图无需原始运行目录即可复现。
 
 ### 可复现性
 
@@ -207,15 +223,19 @@ python src/prepare_yolo_crops.py \
 |---|---|---|
 | 每个已发表数字背后的指标 | 是，`results/metrics/` | 无需 GPU 即可核对全部表格 |
 | 逐比例混淆矩阵（`cm_r*.npy`） | 是，`results/metrics/` | `confusion_matrices.png` 无需重训即可重画 |
-| 生成器 checkpoint（`joint.pt`） | 否，对 git 过大 | 作为附件发布在 Zenodo 记录上；否则需自行重训 |
-| 生成图像池 | 否 | 用 `src/generate.py` 从 checkpoint 重新生成 |
+| 生成器 checkpoint（`joint.pt`） | 不在 git 里，过大 | 图与第 9、11 节扫描背后的全部 11 个 checkpoint 作为附件挂在 Zenodo 记录上，SHA-256 列于 [`release_assets/MANIFEST.md`](release_assets/MANIFEST.md)；否则需自行重训 |
+| 生成图像池 | 不在 git 里 | 12 个扫描与 showcase 池以 zip 附在 Zenodo 记录上（同一清单）；或用 `src/generate.py` 从 checkpoint 重新生成 |
 | LoHi-WELD 数据本身 | 否 | 自行下载后运行 `src/prepare_yolo_crops.py` |
 
 确切环境：`requirements.txt` 给出受支持的版本范围，`requirements-lock.txt` 钉住产出这些结果时的确切版本。即便固定 seed，GPU 结果也不是逐比特可复现的（[`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 10 节）。
 
 ![按 seed 聚合的填充率曲线](results/filling_rate_multiseed.png)
 
-阴影带是三个 seed 上的 ±1 样本标准差；`n=2` 标记 r=0.25，该比例下 seed 42 那一臂因最后 epoch 的 loss 尖峰被排除。这张图支持的是 r=1.0 的结论，而不是三种配置逐比例的排序。
+阴影带是三个 seed 上的 ±1 样本标准差；`n=2` 标记 r=0.25，该比例下 seed 42 那一臂因最后 epoch 的 loss 尖峰被排除。这张图支持的是裁剪级划分下 r=1.0 的结论，而不是三种配置逐比例的排序。
+
+![裁剪级与源图分组划分对比，各三个 seed](results/filling_rate_multiseed_v052.png)
+
+v0.5.2 的图加入了同一臂在源图分组划分下的曲线（红）和三 seed 的 BatchNorm 对照（青）。只有裁剪级曲线在两个面板上都于 r=1.0 明显高于自己的纯真实基线；对照在该点 macro-F1 仅 +0.0069、pore 为负，源图分组曲线两项都为负。
 
 **已提交的 LoHi-WELD showcase。** 来自推荐生成器 `runs/paper2_gn_wrs/joint.pt` 的定性示例。特写上的按类 FID 只是仓库内部诊断量，不可与文献比较。v0.2.0 旧版本保留为 `results/v0.2.0_*.png`。
 
@@ -237,7 +257,7 @@ python src/prepare_yolo_crops.py \
 
 ## 引用方式
 
-如果本复现对你的工作有帮助，请引用**原始论文**与**数据集**而不是本仓库。[`CITATION.cff`](CITATION.cff) 列两组：被复现论文加每个数据集的强制引用，以及实现组件引用（FID、t-SNE、InceptionV3、ResNet-18、VGG19）。本仓库的各版本快照存档于 Zenodo：[10.5281/zenodo.22660143](https://doi.org/10.5281/zenodo.22660143)。
+如果本复现对你的工作有帮助，请引用**原始论文**与**数据集**而不是本仓库。[`CITATION.cff`](CITATION.cff) 列两组：被复现论文加每个数据集的强制引用，以及实现组件引用（FID、t-SNE、InceptionV3、ResNet-18、VGG19）。本仓库的各版本快照存档于 Zenodo：[10.5281/zenodo.22645144](https://doi.org/10.5281/zenodo.22645144)（concept DOI，解析到最新版本）。
 
 ```bibtex
 % --- 主方法参考（被复现的会议论文）---

@@ -41,8 +41,8 @@ which the default configuration replaces:
 
 | switch | default | conference-paper value | status |
 |---|---|---|---|
-| `--adv_loss` | `hinge` | `bce` | expressible, **measured to fail here** |
-| `--no_d_spectral_norm` | off (SN on) | on (no SN) | expressible, **measured to fail here** |
+| `--adv_loss` | `hinge` | `bce` | expressible; **measured to fail on this data with today's code** (CALIBRATION section 11.2) |
+| `--no_d_spectral_norm` | off (SN on) | on (no SN) | expressible; **measured to fail on this data with today's code** (CALIBRATION section 11.2) |
 
 And one that is neither paper's, because neither states a split protocol:
 
@@ -78,11 +78,16 @@ And one that is neither paper's, because neither states a split protocol:
   [CALIBRATION.md](CALIBRATION.md) section 6 can be checked rather than taken on
   trust: BCE's generator term is unbounded above, and at this data scale a
   confident discriminator drove it to roughly 50x the reconstruction term while
-  FID rose. Expect it to fail; that is the point of being able to run it.
+  FID rose. Section 11.2 runs it on today's code for 20 epochs: at the papers'
+  gamma = 1 it fails that way (adversarial term ~20x reconstruction, saturated
+  discriminator, collapsed KL); at this repository's gamma 0.1 it does not
+  collapse and matches the hinge BatchNorm control over the same budget.
 
 Enabling `--d_norm group --weighted_sampler` is the configuration in
 [CALIBRATION.md](CALIBRATION.md) section 9. Read the four things that
-measurement does **not** establish before reusing the numbers.
+measurement does **not** establish before reusing the numbers, and section 11,
+which withdraws its control comparison and reports that the r=1.0 gain does
+not survive a source-frame-grouped split.
 
 ## Public substitute data
 
@@ -158,7 +163,13 @@ glance" is the short form.
   to the papers.
 - **Four hyperparameters were calibrated, not copied.** See
   [CALIBRATION.md](CALIBRATION.md).
-- **Mostly single seed**, except the three-seed GroupNorm arm.
+- **Three seeds where it matters, one seed elsewhere.** The recommended
+  GroupNorm arm, its matched BatchNorm control and the source-grouped rerun
+  of the recommended arm have three seeds each (CALIBRATION sections 9 and
+  11); the GroupNorm-only ablation, the v0.2.0 table and the BCE arms are one
+  seed. At a fixed seed, repeats of the real-only (`r=0`) classifier spread
+  over up to 0.127 macro-F1 and 0.255 pore F1 (section 11.7), so a
+  single-seed difference is not evidence unless its sign recurs across seeds.
 - **Crop-level split, not source-isolated.** The generator and the classifier
   share one stratified random split of individual crops: crop indices never
   cross pools and the test set stays real-only, but crops cut from the same
@@ -178,6 +189,11 @@ glance" is the short form.
   downstream numbers do under it. "Source frame" is one LoHi-WELD original
   image; grouping by weld would be coarser still. A generated pool records its
   own `split_by`, and a sweep refuses a pool whose value disagrees with its own.
+  Measured under that flag at three seeds (CALIBRATION section 11.5): the
+  real-only baseline does not drop on unseen frames, but the augmentation gain
+  disappears - r=1.0 macro-F1 -0.0187 and pore F1 -0.1041 in the mean, pore
+  negative on every seed. The crop-level numbers in the README and section 9
+  are kept as published and are results under that protocol only.
 - **`--selection best_val` selects on a pool the generator also saw.** The
   classifier's leftover validation pool is every train-pool image outside
   `--subset`, and the generator's own validation and FID reference set (200 per
