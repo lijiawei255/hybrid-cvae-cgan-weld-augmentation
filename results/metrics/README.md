@@ -71,8 +71,22 @@ font rendering drift between matplotlib versions.
 Nothing here was edited or retrained; the numbers are the historical
 snapshots the docs already quote.
 
-Runs added after v0.5.1 - the `--selection best_val` rescoring of the five
-sweeps above, and the GroupNorm-only, extra-seed control and source-grouped
-split arms - are in sibling directories named for their run, and are described
-in [`docs/CALIBRATION.md`](../../docs/CALIBRATION.md) section 11. They do not
-replace anything above.
+Runs added in v0.5.2 (`docs/CALIBRATION.md` section 11). Nothing above was
+edited or replaced; these are new directories. The generator histories keep
+the legacy FID scale; the sweeps were scored with `--selection final` unless
+the name says `_bestval`.
+
+| File | Run | Backs |
+| --- | --- | --- |
+| `fid_cross_scale.csv` | `src/eval_fid.py` and `src/make_class_figures.py` on the six published pools, both backends | section 11.1, the two FID scales side by side |
+| `bce_nosn_g0.1/history.csv`, `bce_nosn_g1.0/history.csv` | conference objective (`--adv_loss bce --no_d_spectral_norm`), 20 epochs, gamma 0.1 and 1.0 | section 11.2 |
+| `paper2_gn_only/history.csv` | GroupNorm discriminator without the weighted sampler, seed 42 | section 11.3 generator table |
+| `sweep_gn_only/` | its sweep | section 11.3 downstream table |
+| `probe_eq_g0.1_s43/history.csv`, `probe_eq_g0.1_s44/history.csv` | matched BatchNorm control, seeds 43 and 44 | section 11.4 generator table |
+| `sweep_ctrl_s43/`, `sweep_ctrl_s44/` | their sweeps | section 11.4; the control band in `filling_rate_multiseed_v052.png` |
+| `paper2_src_s42/`, `_s43/`, `_s44/` (`history.csv`) | recommended arm under `--split_by source`, `--val_per_class 190` | section 11.5 generator paragraph |
+| `sweep_src_s42/`, `_s43/`, `_s44/` | their sweeps, `--split_by source` | section 11.5; the source-split band in `filling_rate_multiseed_v052.png`; the README v0.5.2 blockquote |
+| `sweep_paper2_s42_bestval/`, `_s43_bestval/`, `_s44_bestval/`, `sweep_ctrl_s42_bestval/`, `sweep_v020_bestval/` | the five published sweeps rescored with `--selection best_val` from their own pools | section 11.6 |
+
+`results/filling_rate_multiseed_v052.png` is drawn from the `sweep_*`
+directories above plus the section 9 ones; the command is in section 11.
