@@ -175,33 +175,46 @@ def aggregate_seed_metrics(seeds, metric):
             for ratio, values in per_ratio.items()}
 
 
-def save_multi_seed_filling_rate(seeds, references, minority, output):
+def _plot_seed_band(ax, seeds, metric, color, label, band_label=None):
+    """Mean line with a +/- 1 sample-std band; ratios short of seeds are marked."""
+    agg = aggregate_seed_metrics(seeds, metric)
+    ratios = sorted(agg)
+    mean = np.array([agg[r][0] for r in ratios])
+    std = np.array([agg[r][1] for r in ratios])
+    counts = [agg[r][2] for r in ratios]
+    full = max(counts)
+    ax.plot(ratios, mean, "-o", ms=4, color=color, label=f"{label}, mean of {full} seeds")
+    ax.fill_between(ratios, mean - std, mean + std, color=color, alpha=0.18,
+                    label=band_label)
+    for ratio, value, count in zip(ratios, mean, counts):
+        if count < full:
+            ax.annotate(f"n={count}", (ratio, value), textcoords="offset points",
+                        xytext=(0, 9), ha="center", fontsize=7, color="tab:red")
+    return ratios
+
+
+def save_multi_seed_filling_rate(seeds, references, minority, output,
+                                 arm_label="GroupNorm + balanced sampler",
+                                 extra_arms=None, title=None):
     """Seed-aggregated filling-rate curve against labelled reference arms.
 
     The single-seed curve cannot distinguish a real effect from seed noise, so the
     mean carries a +/- 1 std band and any ratio with fewer seeds is marked.
+    ``extra_arms`` maps a label to a further list of per-seed sweeps, each drawn
+    as its own mean and band; ``references`` are single sweeps drawn as dashed
+    lines. With the defaults the output is the v0.3.0 figure, unchanged.
     """
     ref_colors = ["tab:orange", "tab:green", "tab:purple", "tab:brown"]
+    arm_colors = ["tab:red", "tab:cyan", "tab:olive"]
     panels = [("macro_f1", "macro-F1"),
               (f"f1:{minority}", f"{minority} F1 (minority class)")]
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
 
     for ax, (metric, label) in zip(axes, panels):
-        agg = aggregate_seed_metrics(seeds, metric)
-        ratios = sorted(agg)
-        mean = np.array([agg[r][0] for r in ratios])
-        std = np.array([agg[r][1] for r in ratios])
-        counts = [agg[r][2] for r in ratios]
-        full = max(counts)
-
-        ax.plot(ratios, mean, "-o", ms=4, color="tab:blue",
-                label=f"GroupNorm + balanced sampler, mean of {full} seeds")
-        ax.fill_between(ratios, mean - std, mean + std, color="tab:blue", alpha=0.18,
-                        label="$\\pm$1 sample std over seeds")
-        for ratio, value, count in zip(ratios, mean, counts):
-            if count < full:
-                ax.annotate(f"n={count}", (ratio, value), textcoords="offset points",
-                            xytext=(0, 9), ha="center", fontsize=7, color="tab:red")
+        ratios = _plot_seed_band(ax, seeds, metric, "tab:blue", arm_label,
+                                 band_label="$\\pm$1 sample std over seeds")
+        for color, (name, arm_seeds) in zip(arm_colors, (extra_arms or {}).items()):
+            _plot_seed_band(ax, arm_seeds, metric, color, name)
 
         for color, (name, sweep) in zip(ref_colors, references.items()):
             ref_ratios = sorted(r for r in sweep if metric in sweep[r])
@@ -215,8 +228,8 @@ def save_multi_seed_filling_rate(seeds, references, minority, output):
         ax.grid(alpha=0.25)
         ax.legend(frameon=False, fontsize=7.5)
 
-    fig.suptitle("Filling-rate sensitivity across seeds, against single-seed reference arms",
-                 y=0.995)
+    fig.suptitle(title or "Filling-rate sensitivity across seeds, against single-seed "
+                 "reference arms", y=0.995)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     _save(fig, output)
 

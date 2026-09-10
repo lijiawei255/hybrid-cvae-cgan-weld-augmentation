@@ -54,6 +54,12 @@ def main():
                     help="sweep_metrics.csv of one seed of the measured arm; repeat")
     ap.add_argument("--reference", action="append", default=[],
                     help="'label=path/to/sweep_metrics.csv'; repeat")
+    ap.add_argument("--arm", action="append", default=[],
+                    help="'label=path;path;...': a further seed-aggregated arm drawn "
+                         "as its own mean and band; repeat")
+    ap.add_argument("--label", default="GroupNorm + balanced sampler",
+                    help="legend label of the --seed_sweep arm")
+    ap.add_argument("--title", default=None, help="figure title override")
     ap.add_argument("--exclude", action="append", default=[],
                     help="'path=ratio' arm to drop as invalid; repeat")
     ap.add_argument("--minority", required=True,
@@ -79,6 +85,15 @@ def main():
             raise SystemExit(f"--reference {item!r} is not 'label=path'")
         references[label] = read_sweep_csv(path)
 
+    extra_arms = {}
+    for item in args.arm:
+        label, _, paths = item.partition("=")
+        files = [f for f in paths.split(";") if f]
+        if not label or len(files) < 2:
+            raise SystemExit(f"--arm {item!r} is not 'label=path;path[;path...]' "
+                             f"with at least two seeds")
+        extra_arms[label] = [read_sweep_csv(f) for f in files]
+
     metric = f"f1:{args.minority}"
     for path, sweep in loaded.items():
         missing = [r for r, m in sweep.items() if metric not in m]
@@ -88,8 +103,11 @@ def main():
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    save_multi_seed_filling_rate(seeds, references, args.minority, out)
-    print(f"wrote {out} from {len(seeds)} seeds and {len(references)} reference arms")
+    save_multi_seed_filling_rate(seeds, references, args.minority, out,
+                                 arm_label=args.label, extra_arms=extra_arms,
+                                 title=args.title)
+    print(f"wrote {out} from {len(seeds)} seeds, {len(extra_arms)} further "
+          f"seed-aggregated arms and {len(references)} reference arms")
 
 
 if __name__ == "__main__":
