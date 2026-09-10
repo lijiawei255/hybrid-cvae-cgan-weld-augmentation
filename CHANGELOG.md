@@ -11,30 +11,185 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
-## Unreleased
+## v0.5.2 - 2026-09-11
 
-Documentation-only presentation pass; nothing was retrained and no code,
-defaults, or published numbers change.
+Audit remediation and additional-measurement release. An audit of the
+repository as a research reference implementation found that the README
+quickstart could not be run to completion or reproduce the numbers it quotes,
+that four of the five committed figure groups could not be redrawn by anyone
+without the original run directories, and that the paper-vs-code disclosure
+tables stated three things about the papers that the papers do not say. No
+published number changes: every value in `README.md` and
+`docs/CALIBRATION.md` was recomputed from the committed CSVs and reproduces.
+Defaults are unchanged everywhere, so every recorded command line still
+reproduces its run. The new measurements in `docs/CALIBRATION.md` section 11
+are additive; sections 9 and 10 and both README tables are kept as published.
 
 ### Added
 
-- README (English and Chinese): a shields badge row (license, CI, Python,
-  PyTorch, both paper DOIs, Zenodo DOI, maintenance status), a Quick facts
-  summary table, a table of contents, and a Zenodo archive link in the
-  citation section.
+- **The conference paper's own adversarial objective is expressible.**
+  `train_joint.py --adv_loss {hinge,bce}` and `--no_d_spectral_norm`; the
+  conference configuration is the pair `--adv_loss bce --no_d_spectral_norm`.
+  `docs/CALIBRATION.md` section 6 rejected BCE because its generator term is
+  unbounded above, but the code could not run the configuration that argument
+  is about. Default stays hinge + spectral normalisation. The checkpoint
+  records both settings. Pinned by a smoke-test check plus a 3-epoch
+  end-to-end BCE run. Section 11.2 measures it on today's code: at the papers' gamma = 1 it fails as section 6 described - the adversarial term is ~20x reconstruction, the discriminator saturates, the KL collapses and reconstruction never clears the constant-mean anchor; at this repository's gamma 0.1 it is not a collapse and is level with the hinge BatchNorm control over the same 20 epochs, while the GroupNorm discriminator is what separates the arms.
+- **GroupNorm in the encoder and decoder**, `--g_norm {batch,group}`. The
+  journal extension's Table 3 specifies GroupNorm for every network; only the
+  discriminator could express it. Default stays `batch`; `generate.py` and
+  `make_paper_figures.py` rebuild the networks with whatever the checkpoint
+  recorded, and a checkpoint without the key means `batch`. The GroupNorm
+  group count falls back to the largest divisor at or below 32 so a narrow
+  `--base_ch` no longer raises; every published width still gets 32 groups.
+  Not measured on a full run.
+- **Source-frame-grouped split**, `--split_by {crop,source}` on
+  `train_joint.py`, `train_classifier.py`, `make_paper_figures.py` and
+  `measure_split_overlap.py`. `source` assigns each LoHi-WELD source frame as
+  a whole to one half, so no frame feeds both; classes are stratified to
+  within one frame's worth of crops, a class still at zero test crops is
+  repaired with the least-overshooting frame, and a class that cannot appear
+  on both sides raises with its name rather than returning a split that lacks
+  it. The published `crop` protocol is the default and its code path is
+  unchanged: the seed-42/43/44 train, test, subset and validation index lists
+  are SHA-256 identical to the published ones. Generated pools record
+  `split_by` and a sweep refuses a pool whose value disagrees. Section 11.5
+  reports the downstream numbers under it: the r=1.0 gain does not survive.
+- **`src/measure_split_overlap.py`** reproduces the split-overlap audit that
+  section 9 reported without a command: 99.8 / 100 / 100 % of test crops
+  sharing a train-pool source frame at seeds 42 / 43 / 44 under `crop`, and 0
+  under `source`.
+- **`make_multiseed_figure.py --arm`, `--label`, `--title`** draw further
+  seed-aggregated arms as their own mean-and-band curves.
+  `results/filling_rate_multiseed_v052.png` uses them; the v0.3.0 figure is
+  kept and still regenerates byte-identically.
+- **`make_paper_figures.py` runs without a checkpoint.** Omitting `--ckpt` and
+  `--data_root` skips the model-dependent figures and takes class names and
+  counts from `--subset`, so `class_distribution.png`, `training_curves.png`,
+  `filling_rate_curve.png` and `confusion_matrices.png` redraw from
+  `results/metrics/` alone (the first three byte-identical, the last differing
+  only in title-text rendering).
+- **`results/metrics/`** gains the per-ratio confusion matrices of the five
+  published sweeps, a `SHA256SUMS` manifest, the exports of every section-11
+  run, and `fid_cross_scale.csv`; its README states that every `fid` column
+  there is on the legacy scale.
+- **`requirements-lock.txt`** pins the exact stack the results came from;
+  `requirements.txt` gains upper bounds; CI installs `pytorch-fid` last with
+  `--no-deps` so it cannot replace the resolved torch build, and runs with
+  read-only permissions.
+- **`CITATION.cff`** credits spectral normalisation (Miyato et al. 2018),
+  Sub-Pixel convolution (Shi et al. 2016) and GroupNorm (Wu & He 2018), all
+  load-bearing and previously uncited.
+- **Zenodo attachments.** The generator checkpoints and generated pools behind
+  every committed figure and every section 9 and 11 sweep are published on the
+  Zenodo record; `release_assets/MANIFEST.md` lists each file, its SHA-256
+  and the run it belongs to.
+- README (English and Chinese): shields badge row, Quick facts table, table
+  of contents, a Reproducibility table saying what ships and what does not,
+  and a Zenodo archive link in the citation section.
+
+### Measured
+
+`docs/CALIBRATION.md` section 11 adds six sets of runs, all additive, with
+their metric exports under `results/metrics/` and their checkpoints and pools
+on the Zenodo record. What they establish, in one line each:
+
+- **The r=1.0 gain does not survive a source-frame-grouped split** (11.5).
+  The recommended arm rerun end to end at three seeds with `--split_by
+  source` has an r=1.0 macro-F1 delta of -0.0187 (per seed +0.0065, -0.0186,
+  -0.0439) and a pore F1 delta of -0.1041, negative on every seed; the
+  real-only baseline itself does not drop on unseen frames. The README and
+  section 9 tables are kept as published and now carry a blockquote saying
+  they are crop-level-split results.
+- **Section 9's control sentence is withdrawn** (11.4). At three seeds the
+  matched BatchNorm control's r=1.0 delta is +0.0069 macro-F1 / -0.0338 pore
+  F1, so it does not reproduce the sign flip that its seed 42 showed.
+- **GroupNorm alone gives the discriminator equilibrium and the
+  reconstruction gain; the sampler gives the downstream usefulness** (11.3,
+  one seed). Without the sampler `loss_d` still sits at 2.0 and `val_recon`
+  reaches 0.0185, but the pool is the worst downstream at every ratio.
+- **The fixed-seed noise floor is 0.08-0.13 macro-F1 and up to 0.255 pore
+  F1**, not the 0.009 / 0.034 section 10 quoted from one repeat (11.7).
+  Eight real-only runs of one configuration across three seeds measure it.
+- **`--selection best_val` changes the conclusions and under-trains** (11.6).
+  Rescoring the five published sweeps shrinks the recommended arm's r=1.0 gain
+  to +0.0041, flips v0.2.0's "r=1.0 is worst" to "best", and restores epochs
+  6-24 of 100 in every arm.
+- **The two FID backends disagree about the ranking of this repo's own
+  pools**, by a non-constant factor of 1.26-1.71x (11.1); the pool with the
+  best legacy FID is the worst downstream (11.3).
+- **The conference paper's BCE objective on today's code** (11.2): at the papers' gamma = 1 it fails as section 6 described - the adversarial term is ~20x reconstruction, the discriminator saturates, the KL collapses and reconstruction never clears the constant-mean anchor; at this repository's gamma 0.1 it is not a collapse and is level with the hinge BatchNorm control over the same 20 epochs, while the GroupNorm discriminator is what separates the arms.
 
 ### Changed
 
+- `verify_generation_meta` also checks `img_size`, `channels` and `split_by`,
+  and a pool with no `meta.json` is refused unless `--allow_missing_meta` is
+  passed, instead of printing a note and continuing unchecked.
 - **`ClassFolderDataset` sorts crop filenames by name rather than by `Path`.**
   `Path` comparison is case-insensitive on Windows and case-sensitive on POSIX,
   so a class folder holding filenames that differ only in case was enumerated
   in a different order on the two platforms - and that order is what the seeded
-  split indexes into. Sorting on the name string is platform-independent.
-  Verified not to change the published splits: the seed-42/43/44 train, test,
-  subset and validation index lists are SHA-256 identical before and after, on
-  the LoHi-WELD crop tree behind every published number, whose filenames are
-  digits and underscores only. A dataset that does contain case-varying names
-  in one class folder will split differently on Windows than it did before.
+  split indexes into. Verified not to change the published splits (SHA-256
+  identical index lists on the LoHi-WELD crop tree, whose filenames are digits
+  and underscores only). A dataset that does contain case-varying names in one
+  class folder will split differently on Windows than it did before.
+
+### Fixed
+
+- `train_joint.py --help` crashed with `TypeError: %o format` because two help
+  strings contained unescaped percent signs.
+
+### Docs
+
+- **Quickstart, both languages.** The figures step read `runs/joint_lohi`, a
+  v0.2.0 run the quickstart never creates, so following it in order ended in
+  `FileNotFoundError`; it now reads the run the quickstart produces. The
+  training step gains `--patience 70 --lr_patience 70 --fid_every 5
+  --sample_every 10` (at the defaults it early-stops near epoch 32 and is a
+  different generator), and the sweep step gains `--selection final`, the
+  protocol behind every published table.
+- **Paper-vs-code table corrections.** The journal extension's decoder output
+  was recorded as "n/a" (it specifies Tanh over [-1, 1]) and its
+  reconstruction loss as weighted MSE (it specifies Charbonnier), both marked
+  aligned; the encoder's global average pooling was called "aggregation
+  aligned" where the conference paper specifies a flatten; the early-stopping
+  row did not say that the headline arm disabled it. Newly disclosed: `base_ch
+  64` against the journal's 32-256 widths, BatchNorm hard-coded in E/D until
+  `--g_norm`, spectral norm on all four blocks plus the dense head against the
+  journal's first three, a single-layer perceptual loss against Eq. 7's
+  multi-layer sum, the adversarial term applied to prior samples only, the
+  ratio grid not sampling the 0.1-0.2 region, no traditional-augmentation arm
+  and no PCA figure. `docs/USAGE.md` carries the same list plus the choices
+  the papers leave unspecified.
+- **Grayscale.** Both docs justified `--channels 3` by calling the papers'
+  grayscale a property of their camera; the conference paper states RGB frames
+  "were converted to grayscale to reduce redundancy and suppress irrelevant
+  color variations". The choice stands as a data-driven deviation; the
+  justification is withdrawn.
+- **Disclaimer.** It said no figures, tables or text from the papers are
+  reproduced, while section 8 quotes the journal's Fig. 15(a) ablation values.
+  That section is now marked as CC BY 4.0 reuse with attribution, and the
+  disclaimer says what it means: no imagery, no proprietary data, no claimed
+  results.
+- **Numbers.** The README's constant-mean reconstruction anchor was 0.062
+  against CALIBRATION's 0.0556 for the same split; remeasured on that exact
+  800-image validation split it is 0.0556 (per-image mean 0.0339), corrected
+  in README and in the v0.2.0 entry below in place. The measured noise floor
+  (pore F1 0.034, macro-F1 0.009 at fixed seed) now sits beside the per-ratio
+  table it bounds.
+- **CALIBRATION.** Section 1's addendum table states its aggregation window
+  and names the unpublished probe behind its one uncheckable row; section 6
+  discloses the spectral-norm scope deviation and credits the two techniques'
+  origins; section 9 records the v0.2.0 production commands, recovered from
+  the checkpoint's stored config, and the overlap reproduce command; section
+  10 no longer describes `--deterministic` and best-epoch selection as absent,
+  no longer cites a README caveat that never existed, and drops an internal
+  tracker reference. Section 11 is new.
+- The v0.4.0 entry below notes that no `v0.4.0` tag exists (the tags go
+  v0.3.1 -> v0.4.1 in one commit) and that none was created after the fact.
+- `DATA_SOURCES.md`: the `grima.cl` GDXray host no longer resolves.
+- `train_joint.py` and this file no longer refer to an unpublished
+  reproduction guide's skeleton.
 
 ## v0.5.1 - 2026-09-08
 
