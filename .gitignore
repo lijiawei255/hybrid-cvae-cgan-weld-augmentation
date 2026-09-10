@@ -236,3 +236,5 @@ REPRODUCTION_GUIDE.md
 .mimosa/
 .zcode/
 AGENTS.md
+# Zenodo upload staging (checkpoints and pool zips); only MANIFEST.md is tracked
+release_assets/upload/
