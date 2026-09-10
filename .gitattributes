@@ -2,3 +2,8 @@
 *.png binary
 *.npy binary
 *.pt binary
+# results/metrics/ is a published, SHA-256-listed record: pin its text files to
+# LF so the digests in SHA256SUMS hold on every platform's checkout.
+results/metrics/**/*.csv text eol=lf
+results/metrics/README.md text eol=lf
+results/metrics/SHA256SUMS text eol=lf

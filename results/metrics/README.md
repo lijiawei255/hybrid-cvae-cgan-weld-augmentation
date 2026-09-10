@@ -31,7 +31,8 @@ Three file kinds:
   reproduces its own row of the neighbouring `sweep_metrics.csv`.
 
 `SHA256SUMS` lists every file here. Verify with `sha256sum -c SHA256SUMS` from
-this directory.
+this directory. The text files are pinned to LF line endings by
+`.gitattributes`, so the digests hold on every platform's checkout.
 
 ## Redrawing the four CSV-only figures
 
