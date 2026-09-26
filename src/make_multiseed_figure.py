@@ -83,6 +83,9 @@ def main():
         label, _, path = item.partition("=")
         if not path:
             raise SystemExit(f"--reference {item!r} is not 'label=path'")
+        if label in references:
+            raise SystemExit(f"--reference label {label!r} given twice; it would "
+                             f"silently replace the earlier arm")
         references[label] = read_sweep_csv(path)
 
     extra_arms = {}
@@ -92,6 +95,9 @@ def main():
         if not label or len(files) < 2:
             raise SystemExit(f"--arm {item!r} is not 'label=path;path[;path...]' "
                              f"with at least two seeds")
+        if label in extra_arms:
+            raise SystemExit(f"--arm label {label!r} given twice; it would "
+                             f"silently replace the earlier arm")
         extra_arms[label] = [read_sweep_csv(f) for f in files]
 
     metric = f"f1:{args.minority}"

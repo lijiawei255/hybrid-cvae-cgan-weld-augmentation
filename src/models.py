@@ -108,6 +108,9 @@ class Encoder(nn.Module):
     def __init__(self, img_channels=1, num_classes=4, latent_dim=32, base_ch=64, img_size=224,
                  norm="batch"):
         super().__init__()
+        # Same stride-2 geometry check the Decoder applies, so an img_size not
+        # divisible by 16 fails at construction rather than at first forward.
+        _final_size(img_size)
         # Class label is embedded as an extra spatial map and concatenated with
         # the image, which is how both papers condition the encoder.
         self.label_emb = nn.Embedding(num_classes, img_size * img_size)
@@ -146,6 +149,10 @@ class Decoder(nn.Module):
                  norm="batch"):
         super().__init__()
         c = base_ch
+        if c < 2:
+            # widths ends at c // 2, which is 0 for base_ch 1 - a zero-channel
+            # conv fails deep inside nn instead of here.
+            raise ValueError(f"base_ch must be >= 2, got {base_ch}")
         self.final_size = _final_size(img_size)
         self.label_emb = nn.Embedding(num_classes, latent_dim)
         self.fc = nn.Linear(latent_dim * 2, c * 8 * self.final_size ** 2)

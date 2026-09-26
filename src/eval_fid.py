@@ -21,6 +21,14 @@ so published numbers in this repository remain reproducible. The two backends
 are **not** on the same scale; do not mix them, and do not compare either to
 the papers' FID.
 
+Scope note: this standalone script builds its real reference from the **whole
+tree** under ``--real_root``, including any crops a ``train_joint.py`` run
+held out as its test split. The per-epoch FID written to ``history.csv``
+during training excludes that test split (its reference is the generator
+validation pool), so a standalone score and a training-history score measured
+on the same pool differ slightly by construction - neither is an error, they
+just use different reference sets.
+
 Two details that are easy to get wrong on the legacy path:
 
 * InceptionV3 with ``transform_input=False`` expects input in **[-1, 1]**.
@@ -260,6 +268,13 @@ def main():
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
 
+    for root in (args.real_root, args.fake_root):
+        if not Path(root).is_dir():
+            raise SystemExit(f"not a directory: {root}")
+    if args.balanced_per_class < 0:
+        raise SystemExit(
+            f"--balanced_per_class must be >= 0, got {args.balanced_per_class}")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     assert_channels_match_data(args.real_root, args.channels)
     assert_channels_match_data(args.fake_root, args.channels)
@@ -269,6 +284,11 @@ def main():
     ds_real, real_loader = build_loader(args.real_root, args.img_size, args.batch_size,
                                         **load_kw)
     ds_fake, fake_loader = build_loader(args.fake_root, args.img_size, args.batch_size, **load_kw)
+    for root, ds in ((args.real_root, ds_real), (args.fake_root, ds_fake)):
+        if not ds.samples:
+            # Otherwise an empty tree dies later inside np.concatenate with a
+            # message that never mentions which side was empty.
+            raise SystemExit(f"no images found under {root}")
     remap_generated_classes(ds_fake, args.fake_root, ds_real.classes)
     if not args.no_balance:
         def counts_by_name(ds):

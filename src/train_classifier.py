@@ -24,6 +24,12 @@ Protocol notes:
   v0.2.0 / v0.3.0 tables used the final epoch; pass ``--selection final``
   to reproduce that protocol. A late loss spike can otherwise invalidate
   a single filling-rate arm.
+- Disclosure: that leftover validation pool is the same pool
+  ``train_joint.py`` draws its generator validation / FID reference set
+  from, so images used to select the generator checkpoint (early stopping,
+  LR schedule) also sit inside classifier validation here. This follows
+  from the deliberate one-train-pool design - the generator never trains
+  on them either, and the held-out test set is untouched by everything.
 - Known limitation, disclosed in README.md: the papers evaluate LSTM/GRU
   sequence models on 21-frame molten-pool sequences. Static weld-bead images
   have no temporal axis, so an image classifier is substituted. The *protocol*
@@ -181,6 +187,13 @@ def main():
     ap.add_argument("--out_dir", default="runs/classifier_sweep")
     args = ap.parse_args()
 
+    if not Path(args.data_root).is_dir():
+        raise SystemExit(f"--data_root is not a directory: {args.data_root}")
+    if not Path(args.gen_root).is_dir():
+        raise SystemExit(f"--gen_root is not a directory: {args.gen_root}")
+    if not 0.0 < args.test_frac < 1.0:
+        raise SystemExit(f"--test_frac must be in (0, 1), got {args.test_frac}")
+
     ratios = [float(r) for r in args.ratios.split(",") if r.strip()]
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -221,7 +234,8 @@ def main():
     print(f"N_max (majority class count) = {n_max}; balance-to-max fills every class to it")
 
     dl_kw = dict(batch_size=args.batch_size, num_workers=args.num_workers,
-                 pin_memory=True, persistent_workers=args.num_workers > 0)
+                 pin_memory=(device == "cuda"),
+                 persistent_workers=args.num_workers > 0)
     loader_test = DataLoader(Subset(ds, test_idx), shuffle=False, drop_last=False, **dl_kw)
     loader_val = (DataLoader(Subset(ds, val_idx), shuffle=False, drop_last=False, **dl_kw)
                   if selection == "best_val" else None)

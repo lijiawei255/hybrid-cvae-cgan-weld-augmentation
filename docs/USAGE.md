@@ -147,6 +147,24 @@ src/make_class_figures.py per-class close-ups with per-class FID
 src/smoke_test.py         unit checks + end-to-end run on synthetic data
 ```
 
+### Expert-only CLI flags
+
+Flags the quickstart does not need, documented here so `--help` is not their
+only record:
+
+- `generate.py --per_class N`: uniform count for every class, ignored once
+  `--counts` is given.
+- `eval_fid.py --no_balance`: compare both trees as-is with their natural
+  class mixes, instead of the default class-balanced sampling over shared
+  classes.
+- `eval_fid.py --balanced_per_class N`: fix the per-class image count used on
+  both sides of the balanced comparison (default: the smallest shared count).
+- `train_classifier.py --deterministic`: request deterministic CuDNN
+  algorithms; slower, and still not bit-identical across GPUs.
+- `train_classifier.py --allow_missing_meta`: sweep a generated pool that has
+  no `meta.json` (only pools written before `meta.json` existed), skipping the
+  split-configuration check.
+
 ## Limitations
 
 Read this before quoting any number from this repo. The README "Scope at a

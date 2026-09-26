@@ -396,6 +396,9 @@ def main():
     ap.add_argument("--out_dir", default="results")
     args = ap.parse_args()
 
+    if not 0.0 < args.test_frac < 1.0:
+        raise SystemExit(f"--test_frac must be in (0, 1), got {args.test_frac}")
+
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -433,6 +436,10 @@ def main():
     print("wrote", out / "class_distribution.png")
 
     # ---- training curves ----
+    for csv_path, flag in ((Path(args.history), "--history"),
+                           (Path(args.sweep), "--sweep")):
+        if not csv_path.is_file():
+            raise SystemExit(f"{flag} file not found: {csv_path}")
     save_training_curves(read_history_csv(args.history), out / "training_curves.png")
     print("wrote", out / "training_curves.png")
 
@@ -445,7 +452,13 @@ def main():
     cm_ratios = [float(r) for r in args.cm_ratios.split(",")]
     if len(cm_ratios) != 2:
         raise SystemExit("--cm_ratios takes exactly two ratios, e.g. '0.0,1.0'")
-    matrices = [np.load(Path(args.cm_dir) / f"cm_r{r:g}.npy") for r in cm_ratios]
+    matrices = []
+    for r in cm_ratios:
+        cm_path = Path(args.cm_dir) / f"cm_r{r:g}.npy"
+        if not cm_path.is_file():
+            raise SystemExit(f"{cm_path} not found; --cm_dir must hold the "
+                             f"cm_r*.npy files train_classifier.py writes")
+        matrices.append(np.load(cm_path))
 
     def ratio_label(r):
         if r == 0.0:
@@ -523,9 +536,14 @@ def main():
         torch.utils.data.Subset(ds, subset_idx), batch_size=64, shuffle=False,
         num_workers=args.num_workers, persistent_workers=args.num_workers > 0)
     points, labels = encoder_latents(enc, latent_loader, device, limit=args.tsne_samples)
+    if len(points) < 3:
+        print(f"note: only {len(points)} latent points; skipping latent_tsne.png")
+        return
     from sklearn.manifold import TSNE
+    # perplexity must be < n_samples; the clamp keeps even tiny subsets legal.
+    perplexity = min(30, max(2, (len(points) - 1) // 3), len(points) - 1)
     projected = TSNE(n_components=2, init="pca", random_state=args.seed,
-                     perplexity=min(30, max(5, len(points) // 4))).fit_transform(points)
+                     perplexity=perplexity).fit_transform(points)
     save_latent_projection(projected, labels, classes, out / "latent_tsne.png")
     print("wrote", out / "latent_tsne.png")
 

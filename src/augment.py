@@ -13,9 +13,7 @@ a dataset with different classes or a different class ordering.
 import json
 from pathlib import Path
 
-from data import parse_name_counts
-
-IMG_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+from data import IMG_EXTENSIONS, parse_name_counts
 
 #: Written by generate.py next to the class_i folders and checked by
 #: generated_by_class, so a positional folder tree cannot be read with the wrong

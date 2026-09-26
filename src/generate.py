@@ -88,6 +88,9 @@ def main():
 
     if not args.counts and args.per_class <= 0:
         raise SystemExit("provide either --per_class N or --counts 'NAME=N,...'")
+    if args.batch_size < 1:
+        # batch_size 0 would make generate()'s while loop never advance.
+        raise SystemExit("--batch_size must be >= 1")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(args.seed)

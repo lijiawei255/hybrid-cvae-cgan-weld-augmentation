@@ -9,31 +9,21 @@ src/eval_fid.py), sized to stay readable when pasted directly into a chat
 window. Output files land in --out_dir as class_<NAME>.png.
 """
 import argparse
-import random
 import sys
 from pathlib import Path
 
 import torch
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from torch.utils.data import DataLoader, Subset
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from augment import generated_by_class
-from data import (ClassFolderDataset, ListDataset, assert_channels_match_data,
-                  make_splits)
+from data import (IMG_EXTENSIONS, ClassFolderDataset, ListDataset,
+                  assert_channels_match_data, make_splits)
 from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
                       _stats, frechet_distance)
-
-
-def load_row(files, per_row, img_size, seed):
-    """At most per_row images from an explicit file list; never padded."""
-    rng = random.Random(seed)
-    files = sorted(files)
-    if len(files) > per_row:
-        files = rng.sample(files, per_row)
-    return [Image.open(f).convert("RGB").resize((img_size, img_size), Image.BILINEAR)
-            for f in files]
+from make_comparison import default_font, load_images
 
 
 def main():
@@ -49,6 +39,10 @@ def main():
                          "so the per-class FID compares like with like (see eval_fid.py)")
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
     ap.add_argument("--test_frac", type=float, default=0.2)
+    ap.add_argument("--split_by", choices=("crop", "source"), default="crop",
+                    help="must match the generator's --split_by, so the FID reference "
+                         "excludes exactly the held-out test split; 'crop' is the "
+                         "published protocol. See train_joint.py --split_by.")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--num_workers", type=int, default=4)
@@ -56,6 +50,11 @@ def main():
     args = ap.parse_args()
 
     real_root, gen_root = Path(args.real_root), Path(args.gen_root)
+    for root in (real_root, gen_root):
+        if not root.is_dir():
+            raise SystemExit(f"not a directory: {root}")
+    if not 0.0 < args.test_frac < 1.0:
+        raise SystemExit(f"--test_frac must be in (0, 1), got {args.test_frac}")
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -66,15 +65,11 @@ def main():
                             args.fft_denoise, args.fft_cutoff)
     s, g = args.img_size, 8
 
-    try:
-        font = ImageFont.load_default(size=20)
-        small = ImageFont.load_default(size=16)
-    except TypeError:
-        font = ImageFont.load_default()
-        small = font
+    font = default_font(20)
+    small = default_font(16)
 
     pool = generated_by_class(gen_root, ds.classes)
-    _, test_idx = make_splits(ds.samples, args.test_frac, args.seed)
+    _, test_idx = make_splits(ds.samples, args.test_frac, args.seed, args.split_by)
     test_set = set(test_idx)
 
     for i, cname in enumerate(ds.classes):
@@ -90,7 +85,7 @@ def main():
         gen_samples = [(f, i) for f in gen_files]
 
         dl_kw = dict(batch_size=args.batch_size, num_workers=args.num_workers,
-                     pin_memory=True)
+                     pin_memory=(device == "cuda"))
         real_loader = DataLoader(Subset(ds, real_idx), shuffle=False,
                                  drop_last=False, **dl_kw)
         gen_loader = DataLoader(ListDataset(gen_samples, ds.tf, ds.channels), shuffle=False,
@@ -99,10 +94,10 @@ def main():
         mu_f, s_f = _stats(extractor.features(gen_loader))
         fid = frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend)
 
-        real_imgs = load_row([p for p in (real_root / cname).iterdir()
-                              if p.suffix.lower() in (".png", ".jpg", ".jpeg")],
-                             args.per_row, s, seed=0)
-        gen_imgs = load_row(gen_files, args.per_row, s, seed=1)
+        real_imgs = load_images([p for p in (real_root / cname).iterdir()
+                                 if p.suffix.lower() in IMG_EXTENSIONS],
+                                args.per_row, s, seed=0)
+        gen_imgs = load_images(gen_files, args.per_row, s, seed=1)
 
         label_w, header_h, stats_h = 110, 30, 30
         W = label_w + args.per_row * s + (args.per_row - 1) * g

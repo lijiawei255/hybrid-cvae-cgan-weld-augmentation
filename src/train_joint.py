@@ -79,6 +79,8 @@ def parse_kl_warmup(text):
     if len(parts) != 2:
         raise ValueError(f"--kl_warmup takes 'ZERO,RAMP' epoch counts, got {text!r}")
     zero, ramp = int(parts[0]), int(parts[1])
+    if zero < 0:
+        raise ValueError(f"--kl_warmup ZERO must be >= 0 epochs, got {text!r}")
     if ramp < 1:
         raise ValueError(f"--kl_warmup ramp must be at least 1 epoch, got {text!r}")
     return zero, ramp
@@ -243,6 +245,14 @@ def main():
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
     kl_zero, kl_ramp = parse_kl_warmup(args.kl_warmup)
+    if not Path(args.data_root).is_dir():
+        raise SystemExit(f"--data_root is not a directory: {args.data_root}")
+    if args.val_per_class < 1:
+        # An empty validation/FID-reference set would crash validate() with a
+        # division by zero deep into the first epoch.
+        raise SystemExit("--val_per_class must be >= 1")
+    if not 0.0 < args.test_frac < 1.0:
+        raise SystemExit(f"--test_frac must be in (0, 1), got {args.test_frac}")
 
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -275,7 +285,7 @@ def main():
     print(f"generator validation / FID reference: {count_by_class(ds, gen_val)} -> {len(gen_val)}")
 
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
-    dl_kw = dict(num_workers=args.num_workers, pin_memory=True,
+    dl_kw = dict(num_workers=args.num_workers, pin_memory=(device == "cuda"),
                  persistent_workers=args.num_workers > 0)
     sampler = None
     if args.weighted_sampler:
@@ -446,6 +456,12 @@ def main():
                       f"{bad_epochs} epochs (best epoch {best['epoch']})")
                 break
 
+    if best["state"] is None:
+        # Every epoch produced a non-finite monitored metric, so the inf
+        # baseline was never beaten and no checkpoint was written - say so
+        # instead of pointing at a joint.pt that does not exist.
+        raise SystemExit(
+            f"no epoch produced a finite {args.monitor}; no checkpoint was saved")
     print(f"best: epoch {best['epoch']} {args.monitor}={best['monitored']:.4f} "
           f"val_loss={best['val']:.4f} fid={best['fid']:.2f}")
     print(f"checkpoint -> {out / 'joint.pt'}; history -> {history_path}")

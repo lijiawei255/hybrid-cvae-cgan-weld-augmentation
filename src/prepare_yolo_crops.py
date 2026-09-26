@@ -34,7 +34,8 @@ try:
 except ImportError:  # PyYAML is optional; --classes / classes.txt still work
     yaml = None
 
-IMG_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+from data import IMG_EXTENSIONS
+
 LABEL_EXTENSIONS = (".yolo", ".txt")
 
 
@@ -46,7 +47,9 @@ def read_class_names(input_root, classes_arg):
         path = input_root / candidate
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8")
+        # utf-8-sig: tolerate a BOM, which would otherwise become a \ufeff
+        # prefix on the first class name and leak into output folder names.
+        text = path.read_text(encoding="utf-8-sig")
         if path.suffix in (".yaml", ".yml"):
             if yaml is None:
                 continue  # cannot parse YAML without PyYAML; try the next candidate
@@ -132,7 +135,7 @@ def main():
         with Image.open(image_path) as handle:
             width, height = handle.size
             lines = [ln.split() for ln in
-                     label_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+                     label_path.read_text(encoding="utf-8-sig").splitlines() if ln.strip()]
             for k, parts in enumerate(lines):
                 if len(parts) < 5:
                     bad_lines += 1

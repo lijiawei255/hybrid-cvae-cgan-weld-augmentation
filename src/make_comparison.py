@@ -9,14 +9,25 @@ are the sorted subdirectory names of --real_root (e.g. deposit=0,
 discontinuity=1, pore=2, stain=3) and generated images live in class_<i>
 folders under --gen_root.
 
-Pure PIL, no deep-learning dependencies. Output is a single PNG suitable for
-the README and the repository's results/ folder.
+Output is a single PNG suitable for the README and the repository's results/
+folder. Rendered with PIL only; the dataset/generator-tree conventions come
+from the shared data/augment helpers.
 """
 import argparse
 import random
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+from data import IMG_EXTENSIONS
+
+
+def default_font(size):
+    """Sized default font; Pillow versions without load_default(size=) fall back."""
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def load_images(files, per_class, img_size, seed):
@@ -27,9 +38,8 @@ def load_images(files, per_class, img_size, seed):
         files = rng.sample(files, per_class)
     imgs = []
     for f in files:
-        img = Image.open(f).convert("RGB")
-        img = img.resize((img_size, img_size), Image.BILINEAR)
-        imgs.append(img)
+        with Image.open(f) as img:
+            imgs.append(img.convert("RGB").resize((img_size, img_size), Image.BILINEAR))
     return imgs
 
 
@@ -60,7 +70,13 @@ def main():
     from augment import generated_by_class
 
     real_root, gen_root = Path(args.real_root), Path(args.gen_root)
-    class_names = sorted([p.name for p in real_root.iterdir() if p.is_dir()])
+    for root in (real_root, gen_root):
+        if not root.is_dir():
+            raise SystemExit(f"not a directory: {root}")
+    # Skip hidden dirs the same way ClassFolderDataset does: a stray
+    # .ipynb_checkpoints must not become a phantom class row.
+    class_names = sorted(p.name for p in real_root.iterdir()
+                         if p.is_dir() and not p.name.startswith("."))
     pool = generated_by_class(gen_root, class_names)
     s = args.img_size
     g, lw = args.gap, args.label_width
@@ -68,7 +84,7 @@ def main():
     image_rows = []
     for cname in class_names:
         real_files = [p for p in (real_root / cname).iterdir()
-                      if p.suffix.lower() in (".png", ".jpg", ".jpeg")]
+                      if p.suffix.lower() in IMG_EXTENSIONS]
         if not pool[cname]:
             raise SystemExit(
                 f"no generated images for class '{cname}' under {gen_root}; "
@@ -82,10 +98,7 @@ def main():
 
     rows = list(zip(row_labels(class_names), image_rows))
 
-    try:
-        font = ImageFont.load_default(size=args.font_size)
-    except TypeError:
-        font = ImageFont.load_default()
+    font = default_font(args.font_size)
 
     header_h = 44
     n_cols = max(len(imgs) for _, imgs in rows)

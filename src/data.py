@@ -133,8 +133,10 @@ class ClassFolderDataset(Dataset):
         return len(self.samples)
 
     def _open(self, fp):
-        img = Image.open(fp)
-        return img.convert("L" if self.channels == 1 else "RGB")
+        # convert() returns a loaded copy, so the file handle can be closed right
+        # away - leaving it open until GC can hold locks on Windows workers.
+        with Image.open(fp) as img:
+            return img.convert("L" if self.channels == 1 else "RGB")
 
     def __getitem__(self, i):
         fp, label = self.samples[i]
@@ -159,8 +161,8 @@ class ListDataset(Dataset):
 
     def __getitem__(self, i):
         fp, label = self.samples[i]
-        img = Image.open(fp)
-        return self.tf(img.convert("L" if self.channels == 1 else "RGB")), label
+        with Image.open(fp) as img:
+            return self.tf(img.convert("L" if self.channels == 1 else "RGB")), label
 
 
 #: prepare_yolo_crops.py names each crop "<encoded-source-path>_<k:03d>.png", so
@@ -360,6 +362,9 @@ def parse_name_counts(text):
         if name in out:
             raise ValueError(f"class '{name}' appears more than once in {text!r}")
         out[name] = int(value)
+        if out[name] < 0:
+            # A negative count would silently generate/sample nothing downstream.
+            raise ValueError(f"count for class '{name}' must be >= 0, got {out[name]}")
     return out
 
 
@@ -373,6 +378,9 @@ def build_loader(data_root, img_size=224, batch_size=8, num_workers=4, channels=
     # deadlocks on Windows (observed 2026-09-06: epoch teardown stalled for
     # 30+ minutes with spawn-based workers).
     loader = DataLoader(target, batch_size=batch_size, shuffle=shuffle,
-                        num_workers=num_workers, drop_last=drop_last, pin_memory=True,
+                        num_workers=num_workers, drop_last=drop_last,
+                        # pin_memory only helps with a CUDA device; on CPU-only
+                        # machines recent torch warns about it on every loader.
+                        pin_memory=torch.cuda.is_available(),
                         persistent_workers=num_workers > 0)
     return ds, loader
