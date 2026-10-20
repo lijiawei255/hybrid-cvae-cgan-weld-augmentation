@@ -11,6 +11,78 @@ discriminator learning rate, the FFT denoising step and the resolution - live in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md), with the commands that reproduce
 them. This file keeps only the conclusions.
 
+## v0.6.0 - unreleased (2026-10-20)
+
+Reproducibility and robustness maintenance. No published table, figure or
+checkpoint changes; every number in `README.md` and `docs/CALIBRATION.md` is
+left as published. The only default that changes is the classifier's scoring
+protocol, which now matches the published tables again. This version is not
+archived on Zenodo: v0.5.2 remains the Zenodo snapshot, and `CITATION.cff` still
+points at that concept DOI.
+
+### Changed
+
+- **`train_classifier.py --selection` defaults to `final` again.** It was
+  `best_val` from v0.4.0 through v0.5.2, even though every published table and
+  every reproduction command in this repository used `final`. `best_val` remains
+  available and is documented as a different protocol (CALIBRATION 11.6).
+- **Reproduction commands are current again.** CALIBRATION section 9 now writes
+  `--fid_backend legacy` on the generator commands whose `history.csv` FID
+  columns are on that scale, and `--selection final` on the classifier commands
+  recorded before v0.6.0. The section 10 noise command gains the same flag.
+- **`make_paper_figures.py` decodes the posterior mean for the reconstruction
+  row by default**, matching `train_joint.py` validation. The older stochastic
+  row is available as `--reconstruction_sample`.
+
+### Fixed
+
+- **Source-grouped splits no longer reject a class whose test target rounds to
+  zero.** A class with too few crops for one test image now stays in training,
+  the same outcome the crop-level split gives, instead of raising an error that
+  claimed the frame split was impossible.
+- **`--subset` must cover every dataset class by default.** A class omitted or
+  set to 0 previously stayed in the generator validation/FID reference and in
+  the classifier's selection pool, so those metrics scored a class the model
+  never trained on. `--allow_partial_subset` opts into that experiment and
+  restricts validation, FID and selection to the classes actually trained on.
+- **A real-only classifier sweep needs no generated pool.** `train_classifier.py
+  --gen_root` is optional when every `--ratio` is 0.0; a pool is loaded and its
+  metadata checked only when synthetic images are requested.
+- **Generated-pool provenance records what actually produced the images.**
+  `generate.py` now stores the sampling `--seed` (not the checkpoint's training
+  seed), `checkpoint_seed`, `split_by`, `fft_denoise` and `fft_cutoff`; older
+  pools keep working with a warning and `--strict_meta` on the consuming tools
+  turns missing fields into an error. `make_paper_figures.py`,
+  `make_class_figures.py` and `eval_fid.py` now check the fields they can.
+- **Confusion-matrix figures validate their shape.** A 4x4 matrix can no longer
+  be labelled with three class names; the no-checkpoint figure mode takes class
+  names from the sweep metrics rather than from `--subset` alone.
+- **Invalid channel counts are rejected at the dataset boundary.** `--channels`
+  is restricted to `{1, 3}` everywhere; a value such as 2 previously reached a
+  convolutional layer as a shape mismatch.
+- **`prepare_yolo_crops.py --channels 1` refuses colour source trees** unless
+  `--allow_grayscale` is passed, matching the training-side policy.
+- **A class folder with no images is rejected by name** instead of becoming a
+  phantom class whose per-class draw fails later.
+- **`source_key` strips box indices of any length**, so a frame with more than
+  999 boxes cannot be split into two source groups.
+- Smaller CLI hardening: `--epochs`, `--batch_size`, `--num_workers`,
+  learning rates, loss weights, FFT cutoff and `--ratios` are validated up
+  front; CSV readers close their files; FID refuses fewer than two images per
+  side; checkpoints record the full training configuration.
+
+### Documentation
+
+- Corrected stale wording: "both tables" in the Results section, "only the
+  first row" of the figure provenance table, "every deviation is measured"
+  (the unmeasured `--g_norm` is called out), and "every number is reproducible
+  end-to-end" (GPU runs are rerunnable, not bit-reproducible).
+- The README headline now leads with the source-frame-grouped finding, and the
+  classifier default is described as `final` throughout the English and Chinese
+  READMEs and `docs/USAGE.md`.
+- Added `src/measure_split_overlap.py` to the repository-layout list and
+  documented the new expert-only flags in `docs/USAGE.md`.
+
 ## v0.5.2 - 2026-09-11
 
 Audit remediation and additional-measurement release. An audit of the
@@ -21,9 +93,11 @@ without the original run directories, and that the paper-vs-code disclosure
 tables stated three things about the papers that the papers do not say. No
 published number changes: every value in `README.md` and
 `docs/CALIBRATION.md` was recomputed from the committed CSVs and reproduces.
-Defaults are unchanged everywhere, so every recorded command line still
-reproduces its run. The new measurements in `docs/CALIBRATION.md` section 11
-are additive; sections 9 and 10 and both README tables are kept as published.
+Defaults are unchanged in v0.5.2 itself. Commands recorded before v0.4.0 used
+the defaults of their time; v0.6.0 adds the explicit `--selection final` /
+`--fid_backend legacy` flags where a later default would otherwise change them.
+The new measurements in `docs/CALIBRATION.md` section 11 are additive; sections
+9 and 10 and both README tables are kept as published.
 
 ### Added
 
@@ -308,11 +382,12 @@ to future runs only.
   error further in.
 - Malformed table row in the v0.3.0 entry (discriminator lr had a leftover
   fifth cell).
-- `docs/CALIBRATION.md` section 10 now carries a "Partly superseded by
-  v0.4.0" banner (`--selection best_val` is the default since v0.4.0;
-  `--selection final` still reproduces the published behaviour). Two stale
-  cross-references - the section 9 note and the `--channels` default remark -
-  are annotated the same way; measured numbers are untouched.
+- `docs/CALIBRATION.md` section 10 now carries a "Partly superseded" banner
+  (`--selection best_val` was the default from v0.4.0 through v0.5.2;
+  `--selection final` reproduces the published behaviour and is the default
+  again since v0.6.0). Two stale cross-references - the section 9 note and the
+  `--channels` default remark - are annotated the same way; measured numbers
+  are untouched.
 
 ### Changed
 

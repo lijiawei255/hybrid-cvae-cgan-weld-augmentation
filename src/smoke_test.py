@@ -9,11 +9,12 @@ data loading -> joint CVAE-CGAN training -> generation.
 
 It verifies code correctness only, NOT generation quality.
 """
+
+import json
 import shutil
 import sys
 import tempfile
 from pathlib import Path
-
 import numpy as np
 from PIL import Image
 
@@ -30,22 +31,25 @@ def make_synthetic_weld_data(root, n_good=60, n_defect=20, size=128, seed=0):
         for i in range(n):
             img = np.zeros((size, size, 3), np.float32) + 0.15
             band = size // 2 + rng.randint(-8, 8)
-            img[band - 12:band + 12, :, :] = 0.75
+            img[band - 12 : band + 12, :, :] = 0.75
             img += rng.normal(0, 0.03, img.shape).astype(np.float32)
             if cname == "defect":
                 for _ in range(rng.randint(1, 4)):
                     cy, cx = rng.randint(band - 10, band + 10), rng.randint(0, size)
                     r = rng.randint(3, 8)
                     yy, xx = np.ogrid[:size, :size]
-                    mask = (yy - cy) ** 2 + (xx - cx) ** 2 < r ** 2
+                    mask = (yy - cy) ** 2 + (xx - cx) ** 2 < r**2
                     img[mask] *= 0.2
-            Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8)).save(d / f"{i:04d}.png")
+            Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8)).save(
+                d / f"{i:04d}.png"
+            )
 
 
 def run(cmd_args, module):
     print("=" * 20, module, "=" * 20)
     sys.argv = ["prog"] + cmd_args
     import importlib
+
     importlib.import_module(module).main()
 
 
@@ -56,9 +60,11 @@ def check_balanced_fid_sampling():
     class _Ds:
         def __init__(self, classes, counts):
             self.classes = list(classes)
-            self.samples = [(Path(f"{name}_{i}.png"), label)
-                            for label, name in enumerate(classes)
-                            for i in range(counts[label])]
+            self.samples = [
+                (Path(f"{name}_{i}.png"), label)
+                for label, name in enumerate(classes)
+                for i in range(counts[label])
+            ]
 
     ds = _Ds(["pore", "deposit", "stain"], [5, 5, 5])
     selected = balanced_subset(ds, 2, ["pore", "deposit", "stain"], seed=7)
@@ -76,25 +82,33 @@ def check_balanced_fid_sampling():
         raise AssertionError("balanced_subset accepted per_class above availability")
     except ValueError:
         pass
-    assert torch.bincount(balanced_labels(3, 2, "cpu"), minlength=3).tolist() == [2, 2, 2]
+    assert torch.bincount(balanced_labels(3, 2, "cpu"), minlength=3).tolist() == [
+        2,
+        2,
+        2,
+    ]
 
 
 def check_class_distribution_figure(tmp):
     from make_paper_figures import save_class_distribution
 
     output = tmp / "class_distribution.png"
-    save_class_distribution(["good", "defect"],
-                            {"all real": [60, 20], "sparse real": [12, 4]}, output)
+    save_class_distribution(
+        ["good", "defect"], {"all real": [60, 20], "sparse real": [12, 4]}, output
+    )
     assert output.is_file() and output.stat().st_size > 0
 
 
 def check_distribution_protocol():
     from make_paper_figures import build_distribution_series
 
-    series = build_distribution_series(["CR", "LP"], {"CR": 40, "LP": 600},
-                                       {"CR": 560, "LP": 0})
-    assert series == {"real (imbalanced)": [40, 600],
-                      "real + synthetic (balance-to-max)": [600, 600]}, series
+    series = build_distribution_series(
+        ["CR", "LP"], {"CR": 40, "LP": 600}, {"CR": 560, "LP": 0}
+    )
+    assert series == {
+        "real (imbalanced)": [40, 600],
+        "real + synthetic (balance-to-max)": [600, 600],
+    }, series
 
 
 def check_reconstruction_figure(tmp):
@@ -108,8 +122,14 @@ def check_reconstruction_figure(tmp):
 
     annotated = tmp / "reconstruction_annotated.png"
     grouped = torch.rand(6, 1, 8, 8)
-    save_reconstruction_comparison(grouped, grouped, grouped, annotated,
-                                   class_names=["CR", "LP", "ND"], n_per_class=2)
+    save_reconstruction_comparison(
+        grouped,
+        grouped,
+        grouped,
+        annotated,
+        class_names=["CR", "LP", "ND"],
+        n_per_class=2,
+    )
     assert annotated.is_file() and annotated.stat().st_size > 0
 
     rgb = tmp / "reconstruction_rgb.png"
@@ -122,8 +142,12 @@ def check_latent_projection_figure(tmp):
     from make_paper_figures import save_latent_projection
 
     output = tmp / "latent_projection.png"
-    save_latent_projection(np.array([[0, 0], [1, 1], [0, 1], [1, 0]]),
-                           np.array([0, 0, 1, 1]), ["good", "defect"], output)
+    save_latent_projection(
+        np.array([[0, 0], [1, 1], [0, 1], [1, 0]]),
+        np.array([0, 0, 1, 1]),
+        ["good", "defect"],
+        output,
+    )
     assert output.is_file() and output.stat().st_size > 0
 
 
@@ -135,7 +159,8 @@ def check_history_csv_reading(tmp):
         "epoch,beta,recon,kl,perc,loss_g,loss_d,val_loss,val_recon,fid,lr,seconds\n"
         "1,0.000000,0.150000,0.001400,0.307000,1.200000,0.870000,0.166700,0.140000,384.7700,1.000e-03,39.0\n"
         "2,0.015000,0.120000,0.000000,0.250000,1.100000,0.500000,0.150000,0.120000,nan,1.000e-03,22.0\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     history = read_history_csv(path)
     assert history["epoch"] == [1, 2]
     assert history["beta"] == [0.0, 0.015]
@@ -153,7 +178,8 @@ def check_history_csv_reading(tmp):
     legacy.write_text(
         "epoch,recon,kl,perc,loss_g,loss_d,val_loss,val_recon,fid,lr,seconds\n"
         "1,0.150000,0.001400,0.307000,1.200000,0.870000,0.166700,0.140000,384.7700,1.000e-03,39.0\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     old = read_history_csv(legacy)
     assert old["epoch"] == [1] and old["recon"] == [0.15]
     assert "beta" not in old
@@ -166,9 +192,13 @@ def check_sweep_csv_reading(tmp):
     path.write_text(
         "ratio,metric,value\n"
         "0.0,accuracy,0.4200\n0.0,f1:CR,0.2100\n"
-        "1.0,accuracy,0.6100\n1.0,f1:CR,0.4400\n", encoding="utf-8")
-    assert read_sweep_csv(path) == {0.0: {"accuracy": 0.42, "f1:CR": 0.21},
-                                    1.0: {"accuracy": 0.61, "f1:CR": 0.44}}
+        "1.0,accuracy,0.6100\n1.0,f1:CR,0.4400\n",
+        encoding="utf-8",
+    )
+    assert read_sweep_csv(path) == {
+        0.0: {"accuracy": 0.42, "f1:CR": 0.21},
+        1.0: {"accuracy": 0.61, "f1:CR": 0.44},
+    }
 
 
 def check_confusion_matrix_figure(tmp):
@@ -188,7 +218,10 @@ def check_grayscale_dataset(tmp):
     ds = ClassFolderDataset(str(tmp / "smoke_data"), img_size=64, channels=1)
     x, y = ds[0]
     assert x.shape == (1, 64, 64), x.shape
-    assert 0.0 <= float(x.min()) and float(x.max()) <= 1.0, (float(x.min()), float(x.max()))
+    assert 0.0 <= float(x.min()) and float(x.max()) <= 1.0, (
+        float(x.min()),
+        float(x.max()),
+    )
     assert isinstance(y, int)
 
     rgb = ClassFolderDataset(str(tmp / "smoke_data"), img_size=64, channels=3)[0][0]
@@ -207,7 +240,7 @@ def check_fft_denoise():
     def high_freq_energy(a):
         f = np.abs(np.fft.fftshift(np.fft.fft2(a.astype(np.float32))))
         c = min(a.shape) // 2
-        yy, xx = np.ogrid[:a.shape[0], :a.shape[1]]
+        yy, xx = np.ogrid[: a.shape[0], : a.shape[1]]
         r = np.sqrt((yy - c) ** 2 + (xx - c) ** 2)
         return float(f[r > 0.5 * c].sum())
 
@@ -243,7 +276,9 @@ def check_no_leakage_splits(tmp):
     gen_train = sample_named_subset(ds, {"good": 10, "defect": 4}, train_pool, seed=42)
     assert counts(gen_train) == {"good": 10, "defect": 4}
     assert set(gen_train) <= set(train_pool)
-    assert gen_train == sample_named_subset(ds, {"good": 10, "defect": 4}, train_pool, seed=42)
+    assert gen_train == sample_named_subset(
+        ds, {"good": 10, "defect": 4}, train_pool, seed=42
+    )
 
     remaining = [i for i in train_pool if i not in set(gen_train)]
     gen_val = sample_named_subset(ds, {"good": 5, "defect": 2}, remaining, seed=7)
@@ -269,18 +304,25 @@ def check_paper_decoder_and_loss():
     dec = Decoder(1, 4, 32, base_ch=8, img_size=64)
     out = dec(torch.randn(2, 32), torch.tensor([0, 1])).detach()
     assert out.shape == (2, 1, 64, 64), out.shape
-    assert float(out.min()) >= 0.0 and float(out.max()) <= 1.0, (float(out.min()), float(out.max()))
+    assert float(out.min()) >= 0.0 and float(out.max()) <= 1.0, (
+        float(out.min()),
+        float(out.max()),
+    )
 
     x = torch.zeros(2, 1, 8, 8)
     recon_img = torch.full((2, 1, 8, 8), 0.5)
     zero_logvar = torch.zeros(2, 4)
-    total, recon, kl = cvae_loss(x, recon_img, torch.zeros(2, 4), zero_logvar, kl_weight=0.015)
+    total, recon, kl = cvae_loss(
+        x, recon_img, torch.zeros(2, 4), zero_logvar, kl_weight=0.015
+    )
     # MSE gives 0.25 here; L1 would give 0.5, so this pins the reconstruction loss.
     assert abs(float(recon) - 0.25) < 1e-6, float(recon)
     assert abs(float(kl)) < 1e-6
     assert abs(float(total) - 0.25) < 1e-6
 
-    total2, _, kl2 = cvae_loss(x, recon_img, torch.ones(2, 4), zero_logvar, kl_weight=0.015)
+    total2, _, kl2 = cvae_loss(
+        x, recon_img, torch.ones(2, 4), zero_logvar, kl_weight=0.015
+    )
     assert abs(float(kl2) - 0.5) < 1e-6, float(kl2)
     assert abs(float(total2) - (0.25 + 0.015 * 0.5)) < 1e-6, float(total2)
 
@@ -300,7 +342,9 @@ def check_perceptual_loss():
     assert not any(p.requires_grad for p in perc.parameters()), "VGG19 must stay frozen"
 
     a = torch.rand(2, 1, 32, 32)
-    assert float(perc(a, a).detach()) < 1e-6, "identical inputs must give zero perceptual loss"
+    assert float(perc(a, a).detach()) < 1e-6, (
+        "identical inputs must give zero perceptual loss"
+    )
 
     generated = torch.rand(2, 1, 32, 32, requires_grad=True)
     value = perc(generated, torch.rand(2, 1, 32, 32))
@@ -360,7 +404,8 @@ def check_generated_fft_parity():
     generated_side = T.Compose([T.ToPILImage(), FFTLowPass(0.25), T.ToTensor()])
     gen_path = generated_side(T.ToTensor()(pil_img))
     assert torch.allclose(real_path, gen_path, atol=1e-6), (
-        "generated-image FFT post-processing must match the dataset transform")
+        "generated-image FFT post-processing must match the dataset transform"
+    )
 
 
 def check_fid_input_preprocessing():
@@ -441,7 +486,9 @@ def check_fid_stats_numerics():
     shifted = rng.randn(64, 16) + 3.0
     mu_b, cov_b = stats(shifted)
     separated = fid_from_stats(mu, cov, mu_b, cov_b)
-    assert separated > 100.0, f"separated distributions must give a large FID, got {separated}"
+    assert separated > 100.0, (
+        f"separated distributions must give a large FID, got {separated}"
+    )
 
     # 4 samples in 64 dimensions -> covariance has rank 3 and is singular.
     deficient = rng.randn(4, 64)
@@ -464,9 +511,24 @@ def check_filling_rate_protocol():
 
     counts = {"CR": 40, "PO": 200, "ND": 300, "LP": 600}
     assert filling_rate_counts(counts, 0.0) == {"CR": 0, "PO": 0, "ND": 0, "LP": 0}
-    assert filling_rate_counts(counts, 1.0) == {"CR": 560, "PO": 400, "ND": 300, "LP": 0}
-    assert filling_rate_counts(counts, 0.5) == {"CR": 280, "PO": 200, "ND": 150, "LP": 0}
-    assert filling_rate_counts(counts, 0.25) == {"CR": 140, "PO": 100, "ND": 75, "LP": 0}
+    assert filling_rate_counts(counts, 1.0) == {
+        "CR": 560,
+        "PO": 400,
+        "ND": 300,
+        "LP": 0,
+    }
+    assert filling_rate_counts(counts, 0.5) == {
+        "CR": 280,
+        "PO": 200,
+        "ND": 150,
+        "LP": 0,
+    }
+    assert filling_rate_counts(counts, 0.25) == {
+        "CR": 140,
+        "PO": 100,
+        "ND": 75,
+        "LP": 0,
+    }
 
     # Already-balanced data has no gap to fill, so the protocol is a no-op.
     assert filling_rate_counts({"A": 10, "B": 10}, 1.0) == {"A": 0, "B": 0}
@@ -525,17 +587,27 @@ def check_feature_aggregation_fanin():
 
         dis = Discriminator(1, 4, base_ch=64, img_size=img_size)
         assert dis.fc.in_features <= 512, (img_size, dis.fc.in_features)
-        assert dis(torch.rand(2, 1, img_size, img_size), torch.tensor([0, 1])).shape == (2,)
+        assert dis(
+            torch.rand(2, 1, img_size, img_size), torch.tensor([0, 1])
+        ).shape == (2,)
 
 
 def check_training_curves_figure(tmp):
     from make_paper_figures import save_training_curves
 
-    history = {"epoch": [1, 2, 3], "recon": [0.30, 0.20, 0.15], "kl": [0.10, 0.05, 0.02],
-               "perc": [0.50, 0.40, 0.35], "loss_g": [2.0, 1.5, 1.2],
-               "loss_d": [0.90, 0.70, 0.60], "val_loss": [0.40, 0.30, 0.25],
-               "val_recon": [0.31, 0.22, 0.16], "fid": [400.0, float("nan"), 350.0],
-               "lr": [1e-3] * 3, "seconds": [30.0] * 3}
+    history = {
+        "epoch": [1, 2, 3],
+        "recon": [0.30, 0.20, 0.15],
+        "kl": [0.10, 0.05, 0.02],
+        "perc": [0.50, 0.40, 0.35],
+        "loss_g": [2.0, 1.5, 1.2],
+        "loss_d": [0.90, 0.70, 0.60],
+        "val_loss": [0.40, 0.30, 0.25],
+        "val_recon": [0.31, 0.22, 0.16],
+        "fid": [400.0, float("nan"), 350.0],
+        "lr": [1e-3] * 3,
+        "seconds": [30.0] * 3,
+    }
     output = tmp / "training_curves.png"
     save_training_curves(history, output)
     assert output.is_file() and output.stat().st_size > 0
@@ -544,12 +616,29 @@ def check_training_curves_figure(tmp):
 def check_filling_rate_curve_figure(tmp):
     from make_paper_figures import save_filling_rate_curve
 
-    sweep = {0.0: {"accuracy": 0.42, "macro_f1": 0.40, "weighted_f1": 0.41,
-                   "f1:CR": 0.21, "f1:LP": 0.55},
-             0.5: {"accuracy": 0.50, "macro_f1": 0.48, "weighted_f1": 0.49,
-                   "f1:CR": 0.30, "f1:LP": 0.62},
-             1.0: {"accuracy": 0.61, "macro_f1": 0.59, "weighted_f1": 0.60,
-                   "f1:CR": 0.44, "f1:LP": 0.70}}
+    sweep = {
+        0.0: {
+            "accuracy": 0.42,
+            "macro_f1": 0.40,
+            "weighted_f1": 0.41,
+            "f1:CR": 0.21,
+            "f1:LP": 0.55,
+        },
+        0.5: {
+            "accuracy": 0.50,
+            "macro_f1": 0.48,
+            "weighted_f1": 0.49,
+            "f1:CR": 0.30,
+            "f1:LP": 0.62,
+        },
+        1.0: {
+            "accuracy": 0.61,
+            "macro_f1": 0.59,
+            "weighted_f1": 0.60,
+            "f1:CR": 0.44,
+            "f1:LP": 0.70,
+        },
+    }
     output = tmp / "filling_rate_curve.png"
     save_filling_rate_curve(sweep, ["CR", "LP"], output)
     assert output.is_file() and output.stat().st_size > 0
@@ -568,11 +657,17 @@ def check_multi_seed_filling_rate_figure(tmp):
     """
     from make_paper_figures import aggregate_seed_metrics, save_multi_seed_filling_rate
 
-    seeds = [{0.0: {"macro_f1": 0.60, "f1:pore": 0.30},
-              1.0: {"macro_f1": 0.70, "f1:pore": 0.40}},
-             {0.0: {"macro_f1": 0.70, "f1:pore": 0.50},
-              0.5: {"macro_f1": 0.65, "f1:pore": 0.35},
-              1.0: {"macro_f1": 0.80, "f1:pore": 0.60}}]
+    seeds = [
+        {
+            0.0: {"macro_f1": 0.60, "f1:pore": 0.30},
+            1.0: {"macro_f1": 0.70, "f1:pore": 0.40},
+        },
+        {
+            0.0: {"macro_f1": 0.70, "f1:pore": 0.50},
+            0.5: {"macro_f1": 0.65, "f1:pore": 0.35},
+            1.0: {"macro_f1": 0.80, "f1:pore": 0.60},
+        },
+    ]
 
     agg = aggregate_seed_metrics(seeds, "macro_f1")
     assert sorted(agg) == [0.0, 0.5, 1.0], sorted(agg)
@@ -580,22 +675,24 @@ def check_multi_seed_filling_rate_figure(tmp):
     def close(got, mean, std, n):
         return abs(got[0] - mean) < 1e-9 and abs(got[1] - std) < 1e-9 and got[2] == n
 
-    sample_std = 0.1 / 2 ** 0.5  # two values 0.1 apart
+    sample_std = 0.1 / 2**0.5  # two values 0.1 apart
     assert close(agg[0.0], 0.65, sample_std, 2), agg[0.0]
     assert close(agg[1.0], 0.75, sample_std, 2), agg[1.0]
     # 0.5 exists in one seed only: it aggregates from that seed, with no spread.
     assert close(agg[0.5], 0.65, 0.0, 1), agg[0.5]
 
     pore = aggregate_seed_metrics(seeds, "f1:pore")
-    assert close(pore[1.0], 0.50, 0.2 / 2 ** 0.5, 2), pore[1.0]
+    assert close(pore[1.0], 0.50, 0.2 / 2**0.5, 2), pore[1.0]
 
     output = tmp / "filling_rate_multiseed.png"
     save_multi_seed_filling_rate(
         seeds,
-        references={"published v0.2.0 (seed 42)": {0.0: {"macro_f1": 0.6936,
-                                                         "f1:pore": 0.3778},
-                                                   1.0: {"macro_f1": 0.6418,
-                                                         "f1:pore": 0.3871}}},
+        references={
+            "published v0.2.0 (seed 42)": {
+                0.0: {"macro_f1": 0.6936, "f1:pore": 0.3778},
+                1.0: {"macro_f1": 0.6418, "f1:pore": 0.3871},
+            }
+        },
         minority="pore",
         output=output,
     )
@@ -614,10 +711,18 @@ def check_multi_seed_arm_exclusion():
     """
     from make_multiseed_figure import drop_arms
 
-    loaded = {"s42.csv": {0.0: {"macro_f1": 0.68}, 0.25: {"macro_f1": 0.73},
-                          1.0: {"macro_f1": 0.72}},
-              "s43.csv": {0.0: {"macro_f1": 0.63}, 0.25: {"macro_f1": 0.75},
-                          1.0: {"macro_f1": 0.72}}}
+    loaded = {
+        "s42.csv": {
+            0.0: {"macro_f1": 0.68},
+            0.25: {"macro_f1": 0.73},
+            1.0: {"macro_f1": 0.72},
+        },
+        "s43.csv": {
+            0.0: {"macro_f1": 0.63},
+            0.25: {"macro_f1": 0.75},
+            1.0: {"macro_f1": 0.72},
+        },
+    }
 
     kept = drop_arms(loaded, ["s42.csv=0.25"])
     assert sorted(kept["s42.csv"]) == [0.0, 1.0], sorted(kept["s42.csv"])
@@ -645,7 +750,10 @@ def check_comparison_grid_labels():
     from make_comparison import grid_caption, row_labels
 
     assert row_labels(["pore", "stain"]) == [
-        "pore real", "pore gen", "stain real", "stain gen",
+        "pore real",
+        "pore gen",
+        "stain real",
+        "stain gen",
     ], row_labels(["pore", "stain"])
 
     caption = grid_caption().lower()
@@ -690,6 +798,122 @@ def check_generated_class_manifest(tmp):
     assert [p.name for p in pooled["LP"]] == ["gen_1_00000.png"]
 
 
+def check_channels_validation(tmp):
+    """An invalid channel count must be rejected by the dataset, not by conv."""
+    from data import ClassFolderDataset, assert_channels_match_data
+
+    root = tmp / "channel_data"
+    (root / "a").mkdir(parents=True)
+    Image.new("RGB", (8, 8)).save(root / "a" / "x.png")
+    for bad in (0, 2, 4):
+        try:
+            ClassFolderDataset(str(root), 8, bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"channels={bad} must be rejected by the dataset")
+    try:
+        assert_channels_match_data(str(root), 2)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("assert_channels_match_data must reject channels=2")
+
+
+def check_generation_meta_strict(tmp):
+    """Old pools warn about missing fields; --strict_meta turns that into a refusal."""
+    from augment import verify_generation_meta
+
+    pool = tmp / "meta_pool"
+    pool.mkdir()
+    meta = {
+        "subset": "a=1,b=1",
+        "seed": 42,
+        "test_frac": 0.2,
+        "img_size": 64,
+        "channels": 3,
+    }
+    (pool / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    # Missing split_by/fft fields are tolerated for backward compatibility...
+    verify_generation_meta(
+        pool,
+        "a=1,b=1",
+        42,
+        0.2,
+        img_size=64,
+        channels=3,
+        split_by="crop",
+        fft_denoise=False,
+    )
+    # ...and become an error when the caller asks for a strict check.
+    try:
+        verify_generation_meta(
+            pool,
+            "a=1,b=1",
+            42,
+            0.2,
+            img_size=64,
+            channels=3,
+            split_by="crop",
+            fft_denoise=False,
+            strict_meta=True,
+        )
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("strict_meta must reject a pool missing split_by/fft")
+
+    meta.update({"split_by": "crop", "fft_denoise": False, "fft_cutoff": 0.25})
+    (pool / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    verify_generation_meta(
+        pool,
+        "a=1,b=1",
+        42,
+        0.2,
+        img_size=64,
+        channels=3,
+        split_by="crop",
+        fft_denoise=False,
+        fft_cutoff=0.25,
+        strict_meta=True,
+    )
+    try:
+        verify_generation_meta(
+            pool,
+            "a=1,b=1",
+            42,
+            0.2,
+            img_size=64,
+            channels=3,
+            split_by="source",
+            fft_denoise=False,
+            fft_cutoff=0.25,
+            strict_meta=True,
+        )
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("a split_by mismatch must be refused")
+
+
+def check_confusion_matrix_shape(tmp):
+    """A 4x4 matrix must never be labelled with three class names."""
+    from make_paper_figures import save_confusion_matrices
+
+    try:
+        save_confusion_matrices(
+            ["a", "b", "c"],
+            np.zeros((4, 4), dtype=int),
+            np.zeros((4, 4), dtype=int),
+            tmp / "bad_confusion.png",
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("confusion matrices must match the class-name count")
+
+
 def check_find_label_layouts(tmp):
     """find_label must resolve every documented YOLO layout.
 
@@ -722,8 +946,10 @@ def check_find_label_layouts(tmp):
     (split / "labels" / "train").mkdir(parents=True)
     (split / "images" / "train" / "z.jpg").write_bytes(b"jpg")
     (split / "labels" / "train" / "z.txt").write_text("", encoding="utf-8")
-    assert (find_label(split / "images" / "train" / "z.jpg")
-            == split / "labels" / "train" / "z.txt")
+    assert (
+        find_label(split / "images" / "train" / "z.jpg")
+        == split / "labels" / "train" / "z.txt"
+    )
 
     # No label anywhere: None, not a crash or a wrong fallback.
     orphan = tmp / "orphan"
@@ -750,7 +976,9 @@ def check_eval_fid_generated_tree_mapping(tmp):
     (root / "class_0" / "gen_0_000000.png").write_bytes(b"png")
     (root / "class_1" / "gen_1_000000.png").write_bytes(b"png")
 
-    ds = ClassFolderDataset(str(root), img_size=64, channels=3)
+    ds = ClassFolderDataset(
+        str(root), img_size=64, channels=3, allow_empty_classes=True
+    )
     assert ds.classes == ["class_0", "class_1"]
 
     # No manifest: refuse to guess the class names.
@@ -768,7 +996,9 @@ def check_eval_fid_generated_tree_mapping(tmp):
 
     # A class folder beyond the manifest length: refuse rather than crash.
     (root / "class_2").mkdir()
-    ds3 = ClassFolderDataset(str(root), img_size=64, channels=3)
+    ds3 = ClassFolderDataset(
+        str(root), img_size=64, channels=3, allow_empty_classes=True
+    )
     try:
         remap_generated_classes(ds3, root, ["good", "defect"])
     except SystemExit:
@@ -779,7 +1009,9 @@ def check_eval_fid_generated_tree_mapping(tmp):
 
     # A manifest naming classes the real tree lacks: explicit refusal.
     (root / "classes.txt").write_text("good\nother\n", encoding="utf-8")
-    ds4 = ClassFolderDataset(str(root), img_size=64, channels=3)
+    ds4 = ClassFolderDataset(
+        str(root), img_size=64, channels=3, allow_empty_classes=True
+    )
     try:
         remap_generated_classes(ds4, root, ["good", "defect"])
     except SystemExit:
@@ -816,7 +1048,9 @@ def check_hinge_losses_and_bounded_score():
     dis = Discriminator(1, 2, base_ch=16, img_size=64)
     # A saturated discriminator must still emit a bounded score, otherwise the
     # generator's adversarial term can grow without limit.
-    score = dis(torch.full((4, 1, 64, 64), 50.0), torch.zeros(4, dtype=torch.long)).detach()
+    score = dis(
+        torch.full((4, 1, 64, 64), 50.0), torch.zeros(4, dtype=torch.long)
+    ).detach()
     assert float(score.abs().max()) < 100.0, float(score.abs().max())
 
 
@@ -856,12 +1090,17 @@ def check_discriminator_normalisation_choice():
         dis = Discriminator(1, 2, base_ch=16, img_size=64, norm=kind)
         dis.train()
         with torch.no_grad():
-            return dis(batch, y[:batch.size(0)])[0]
+            return dis(batch, y[: batch.size(0)])[0]
 
     small_bn, full_bn = score_first("batch", x[:2]), score_first("batch", x)
     small_gn, full_gn = score_first("group", x[:2]), score_first("group", x)
-    assert not torch.allclose(small_bn, full_bn, atol=1e-6), "BatchNorm must leak batch context"
-    assert torch.allclose(small_gn, full_gn, atol=1e-9), (float(small_gn), float(full_gn))
+    assert not torch.allclose(small_bn, full_bn, atol=1e-6), (
+        "BatchNorm must leak batch context"
+    )
+    assert torch.allclose(small_gn, full_gn, atol=1e-9), (
+        float(small_gn),
+        float(full_gn),
+    )
 
     for bad in ("instance", "", None):
         try:
@@ -869,7 +1108,9 @@ def check_discriminator_normalisation_choice():
         except ValueError:
             pass
         else:
-            raise AssertionError(f"norm={bad!r} must be rejected, not fall back silently")
+            raise AssertionError(
+                f"norm={bad!r} must be rejected, not fall back silently"
+            )
 
 
 def check_bce_objective_is_expressible_and_unbounded():
@@ -939,10 +1180,15 @@ def check_generator_normalisation_choice():
     # running-statistics buffers differ, so a checkpoint records which norm it
     # used (train_joint.py writes "g_norm") and generate.py rebuilds it.
     for default, group in ((default_enc, group_enc), (default_dec, group_dec)):
-        assert list(dict(default.named_parameters())) == list(dict(group.named_parameters()))
+        assert list(dict(default.named_parameters())) == list(
+            dict(group.named_parameters())
+        )
         extra = set(default.state_dict()) - set(group.state_dict())
-        assert all(k.rsplit(".", 1)[-1] in
-                   {"running_mean", "running_var", "num_batches_tracked"} for k in extra), extra
+        assert all(
+            k.rsplit(".", 1)[-1]
+            in {"running_mean", "running_var", "num_batches_tracked"}
+            for k in extra
+        ), extra
 
     z, y = torch.randn(2, 8), torch.tensor([0, 1])
     assert group_dec(z, y).shape == default_dec(z, y).shape
@@ -960,6 +1206,7 @@ def check_source_grouped_split(tmp):
     from data import ClassFolderDataset, make_splits, source_key
 
     assert source_key("a/b/frame_x_007.png") == "frame_x"
+    assert source_key("a/b/frame_x_1000.png") == "frame_x"  # >999 boxes
     assert source_key("no_index.png") == "no_index"  # degrades to its own group
 
     root = tmp / "split_data"
@@ -972,14 +1219,18 @@ def check_source_grouped_split(tmp):
     ds = ClassFolderDataset(str(root), img_size=8, channels=1)
 
     crop_train, crop_test = make_splits(ds.samples, 0.2, 42)
-    assert (crop_train, crop_test) == make_splits(ds.samples, 0.2, 42, "crop"),         "split_by must default to the published crop-level behaviour"
+    assert (crop_train, crop_test) == make_splits(ds.samples, 0.2, 42, "crop"), (
+        "split_by must default to the published crop-level behaviour"
+    )
 
     train_idx, test_idx = make_splits(ds.samples, 0.2, 42, "source")
     assert not (set(train_idx) & set(test_idx))
     assert len(train_idx) + len(test_idx) == len(ds)
     train_frames = {source_key(ds.samples[i][0]) for i in train_idx}
     test_frames = {source_key(ds.samples[i][0]) for i in test_idx}
-    assert not (train_frames & test_frames), "a source frame must not straddle the split"
+    assert not (train_frames & test_frames), (
+        "a source frame must not straddle the split"
+    )
     assert test_frames, "the source-grouped test half must not be empty"
     # Still stratified: every class keeps roughly its share of the test half.
     for label in {l for _, l in ds.samples}:
@@ -1000,22 +1251,36 @@ def check_source_grouped_split(tmp):
     # greedy rule that only accepts frames doing "more good than harm" would
     # route every one of them to training and leave the class with no test
     # images at all - silently, since nothing downstream checks for it.
-    concentrated = ([(f"big{f}_{k:03d}.png", 0) for f in range(2) for k in range(10)]
-                    + [(f"sm{f}_{k:03d}.png", 1) for f in range(10) for k in range(3)])
+    concentrated = [(f"big{f}_{k:03d}.png", 0) for f in range(2) for k in range(10)] + [
+        (f"sm{f}_{k:03d}.png", 1) for f in range(10) for k in range(3)
+    ]
     train_idx, test_idx = make_splits(concentrated, 0.2, 42, "source")
     for label in (0, 1):
         n_test = sum(1 for i in test_idx if concentrated[i][1] == label)
         n_train = sum(1 for i in train_idx if concentrated[i][1] == label)
         assert n_test > 0, f"class {label} got no test crops"
         assert n_train > 0, f"class {label} got no training crops"
-    assert not ({source_key(concentrated[i][0]) for i in train_idx}
-                & {source_key(concentrated[i][0]) for i in test_idx})
+    assert not (
+        {source_key(concentrated[i][0]) for i in train_idx}
+        & {source_key(concentrated[i][0]) for i in test_idx}
+    )
+
+    # A class too small for one test image rounds its target to 0. That is not
+    # an impossible source split: crop-level has no test image either, and the
+    # class must simply stay in training rather than raising.
+    tiny = [(f"tiny{f}_{k:03d}.png", 0) for f in range(2) for k in range(1)] + [
+        (f"sm{f}_{k:03d}.png", 1) for f in range(10) for k in range(3)
+    ]
+    tiny_train, tiny_test = make_splits(tiny, 0.2, 42, "source")
+    assert [tiny[i][1] for i in tiny_train].count(0) == 2, tiny_train
+    assert all(tiny[i][1] != 0 for i in tiny_test), tiny_test
 
     # And when no frame-level split can put a class on both sides - every one of
     # its crops comes from a single frame - that must be an error, not a split
     # in which the class is missing from one half.
-    impossible = ([(f"only_{k:03d}.png", 0) for k in range(20)]
-                  + [(f"sm{f}_{k:03d}.png", 1) for f in range(10) for k in range(3)])
+    impossible = [(f"only_{k:03d}.png", 0) for k in range(20)] + [
+        (f"sm{f}_{k:03d}.png", 1) for f in range(10) for k in range(3)
+    ]
     try:
         make_splits(impossible, 0.2, 42, "source")
     except ValueError as exc:
@@ -1023,7 +1288,8 @@ def check_source_grouped_split(tmp):
     else:
         raise AssertionError(
             "a class whose crops all come from one source frame cannot be split "
-            "by source; that must raise rather than silently drop it from a half")
+            "by source; that must raise rather than silently drop it from a half"
+        )
 
 
 def check_kl_annealing_schedule():
@@ -1048,8 +1314,12 @@ def check_kl_annealing_schedule():
     for epoch in (1, 10, 60, 200):
         assert kl_schedule(epoch, 0.059) == 0.059, epoch
 
-    for bad in ((0, 0.5, 10, 50), (-1, 0.5, 10, 50),
-                (5, 0.5, -1, 50), (5, 0.5, 10, -5)):
+    for bad in (
+        (0, 0.5, 10, 50),
+        (-1, 0.5, 10, 50),
+        (5, 0.5, -1, 50),
+        (5, 0.5, 10, -5),
+    ):
         try:
             kl_schedule(*bad)
         except ValueError:
@@ -1077,8 +1347,9 @@ def check_class_balanced_sampling_weights():
     assert balanced_sample_weights([]) == []
 
     torch.manual_seed(0)
-    sampler = torch.utils.data.WeightedRandomSampler(weights, num_samples=40000,
-                                                     replacement=True)
+    sampler = torch.utils.data.WeightedRandomSampler(
+        weights, num_samples=40000, replacement=True
+    )
     drawn = [labels[i] for i in sampler]
     minority_freq = drawn.count(1) / len(drawn)
     assert abs(minority_freq - 0.5) < 0.02, minority_freq
@@ -1102,6 +1373,9 @@ if __name__ == "__main__":
         check_multi_seed_arm_exclusion()
         check_comparison_grid_labels()
         check_confusion_matrix_figure(tmp)
+        check_confusion_matrix_shape(tmp)
+        check_channels_validation(tmp)
+        check_generation_meta_strict(tmp)
         root = str(tmp / "smoke_data")
         make_synthetic_weld_data(root, size=64)
 
@@ -1132,32 +1406,142 @@ if __name__ == "__main__":
 
         # Three epochs with --kl_warmup 1,1 so the run passes through both the
         # zero-beta phase (epoch 1) and the ramp (epochs 2-3).
-        run(["--data_root", root, "--img_size", "64", "--latent_dim", "8", "--base_ch", "16",
-             "--epochs", "3", "--batch_size", "8", "--subset", "good=8,defect=4",
-             "--val_per_class", "4", "--fid_every", "1", "--sample_every", "2",
-             "--num_workers", "0", "--d_norm", "group", "--weighted_sampler",
-             "--kl_warmup", "1,1", "--monitor", "val_recon",
-             "--out_dir", str(tmp / "runs" / "joint")], "train_joint")
+        run(
+            [
+                "--data_root",
+                root,
+                "--img_size",
+                "64",
+                "--latent_dim",
+                "8",
+                "--base_ch",
+                "16",
+                "--epochs",
+                "3",
+                "--batch_size",
+                "8",
+                "--subset",
+                "good=8,defect=4",
+                "--val_per_class",
+                "4",
+                "--fid_every",
+                "1",
+                "--sample_every",
+                "2",
+                "--num_workers",
+                "0",
+                "--d_norm",
+                "group",
+                "--weighted_sampler",
+                "--kl_warmup",
+                "1,1",
+                "--monitor",
+                "val_recon",
+                "--out_dir",
+                str(tmp / "runs" / "joint"),
+            ],
+            "train_joint",
+        )
 
-        run(["--ckpt", str(tmp / "runs" / "joint" / "joint.pt"),
-             "--out_root", str(tmp / "smoke_gen"), "--counts", "good=4,defect=4"], "generate")
+        run(
+            [
+                "--ckpt",
+                str(tmp / "runs" / "joint" / "joint.pt"),
+                "--out_root",
+                str(tmp / "smoke_gen"),
+                "--counts",
+                "good=4,defect=4",
+            ],
+            "generate",
+        )
+        pool_meta = json.loads(
+            (tmp / "smoke_gen" / "meta.json").read_text(encoding="utf-8")
+        )
+        assert pool_meta["seed"] == 42, pool_meta
+        assert pool_meta["fft_denoise"] is False, pool_meta
+        assert pool_meta["fft_cutoff"] == 0.25, pool_meta
+        assert pool_meta["split_by"] == "crop", pool_meta
 
         # Same --subset and seed as train_joint above, so the r=0.0 condition is
         # exactly the real data the generator trained on.
-        run(["--data_root", root, "--gen_root", str(tmp / "smoke_gen"),
-             "--subset", "good=8,defect=4", "--ratios", "0.0,1.0",
-             "--img_size", "64", "--channels", "3", "--epochs", "1", "--batch_size", "4",
-             "--num_workers", "0", "--out_dir", str(tmp / "runs" / "sweep")], "train_classifier")
+        run(
+            [
+                "--data_root",
+                root,
+                "--gen_root",
+                str(tmp / "smoke_gen"),
+                "--subset",
+                "good=8,defect=4",
+                "--ratios",
+                "0.0,1.0",
+                "--img_size",
+                "64",
+                "--channels",
+                "3",
+                "--strict_meta",
+                "--epochs",
+                "1",
+                "--batch_size",
+                "4",
+                "--num_workers",
+                "0",
+                "--out_dir",
+                str(tmp / "runs" / "sweep"),
+            ],
+            "train_classifier",
+        )
 
         sweep_dir = tmp / "runs" / "sweep"
         for expected in ("results.txt", "sweep_metrics.csv", "cm_r0.npy", "cm_r1.npy"):
             assert (sweep_dir / expected).is_file(), f"missing {expected}"
 
+        # A real-only baseline must not require a generated pool at all.
+        real_only_dir = tmp / "runs" / "sweep_real_only"
+        run(
+            [
+                "--data_root",
+                root,
+                "--subset",
+                "good=8,defect=4",
+                "--ratios",
+                "0.0",
+                "--img_size",
+                "64",
+                "--channels",
+                "3",
+                "--epochs",
+                "1",
+                "--batch_size",
+                "4",
+                "--num_workers",
+                "0",
+                "--out_dir",
+                str(real_only_dir),
+            ],
+            "train_classifier",
+        )
+        for expected in ("results.txt", "sweep_metrics.csv", "cm_r0.npy"):
+            assert (real_only_dir / expected).is_file(), f"missing real-only {expected}"
+
         # The README quickstart FID command: the standalone tool must consume
         # generate.py's positional class_i tree directly via its manifest.
-        run(["--real_root", root, "--fake_root", str(tmp / "smoke_gen"),
-             "--img_size", "64", "--channels", "3", "--batch_size", "8",
-             "--num_workers", "0"], "eval_fid")
+        run(
+            [
+                "--real_root",
+                root,
+                "--fake_root",
+                str(tmp / "smoke_gen"),
+                "--img_size",
+                "64",
+                "--channels",
+                "3",
+                "--batch_size",
+                "8",
+                "--num_workers",
+                "0",
+            ],
+            "eval_fid",
+        )
         print("SMOKE TEST OK")
     except BaseException:
         print(f"SMOKE TEST FAILED - keeping temp dir for inspection: {tmp}")

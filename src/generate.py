@@ -19,6 +19,7 @@ fixed seed order, which makes the sorted file list a stable prefix ordering -
 the filling-rate sweep relies on that to reuse one nested pool instead of
 regenerating for every ratio.
 """
+
 import argparse
 import json
 import shutil
@@ -40,7 +41,8 @@ def parse_counts(text, classes):
     unknown = sorted(name for name in parsed if name not in name_to_label)
     if unknown:
         raise KeyError(
-            f"unknown class name(s) {unknown}; checkpoint classes are {classes}")
+            f"unknown class name(s) {unknown}; checkpoint classes are {classes}"
+        )
     return {name_to_label[name]: count for name, count in parsed.items()}
 
 
@@ -50,7 +52,9 @@ def generate(G, latent_dim, counts, out_root, device, batch_size=64, classes=Non
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     if classes is not None:
-        (out_root / CLASS_MANIFEST).write_text("\n".join(classes) + "\n", encoding="utf-8")
+        (out_root / CLASS_MANIFEST).write_text(
+            "\n".join(classes) + "\n", encoding="utf-8"
+        )
     written = {}
     for label, total in sorted(counts.items()):
         folder = out_root / f"class_{label}"
@@ -76,12 +80,23 @@ def generate(G, latent_dim, counts, out_root, device, batch_size=64, classes=Non
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", required=True, help="joint.pt (or any checkpoint holding generator weights)")
+    ap.add_argument(
+        "--ckpt",
+        required=True,
+        help="joint.pt (or any checkpoint holding generator weights)",
+    )
     ap.add_argument("--out_root", default="generated")
-    ap.add_argument("--per_class", type=int, default=0,
-                    help="uniform count for every class (ignored if --counts is given)")
-    ap.add_argument("--counts", default="",
-                    help="per-class counts by NAME, e.g. 'deposit=450,discontinuity=300,pore=560,stain=0'")
+    ap.add_argument(
+        "--per_class",
+        type=int,
+        default=0,
+        help="uniform count for every class (ignored if --counts is given)",
+    )
+    ap.add_argument(
+        "--counts",
+        default="",
+        help="per-class counts by NAME, e.g. 'deposit=450,discontinuity=300,pore=560,stain=0'",
+    )
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
@@ -106,8 +121,14 @@ def main():
 
     # Checkpoints written before --g_norm existed have no entry and were all
     # trained with BatchNorm, so that is the right fallback.
-    G = Decoder(channels, num_classes, latent_dim, ckpt["base_ch"], ckpt["img_size"],
-                norm=ckpt.get("g_norm", "batch")).to(device)
+    G = Decoder(
+        channels,
+        num_classes,
+        latent_dim,
+        ckpt["base_ch"],
+        ckpt["img_size"],
+        norm=ckpt.get("g_norm", "batch"),
+    ).to(device)
     G.load_state_dict(state)
     G.eval()
 
@@ -115,13 +136,16 @@ def main():
         if classes is None:
             raise KeyError(
                 "--counts needs class names, but this checkpoint stores none; "
-                "retrain it or use --per_class instead")
+                "retrain it or use --per_class instead"
+            )
         counts = parse_counts(args.counts, classes)
     else:
         counts = {label: args.per_class for label in range(num_classes)}
 
-    print(f"checkpoint: img_size={ckpt['img_size']} channels={channels} "
-          f"latent_dim={latent_dim} classes={classes}")
+    print(
+        f"checkpoint: img_size={ckpt['img_size']} channels={channels} "
+        f"latent_dim={latent_dim} classes={classes}"
+    )
     for label, n in sorted(counts.items()):
         name = classes[label] if classes else str(label)
         print(f"  class_{label} -> {name}: {n} images")
@@ -136,17 +160,38 @@ def main():
         elif stale.is_file():
             stale.unlink()
 
-    written = generate(G, latent_dim, counts, args.out_root, device, args.batch_size,
-                       classes=classes)
-    meta = {"classes": classes, "counts": {classes[l] if classes else str(l): n
-                                           for l, n in sorted(counts.items())},
-            "subset": ckpt.get("subset"), "seed": ckpt.get("seed"),
-            "test_frac": ckpt.get("test_frac"), "img_size": ckpt["img_size"],
-            "channels": channels, "split_by": ckpt.get("split_by", "crop"),
-            "g_norm": ckpt.get("g_norm", "batch"), "generator": str(args.ckpt)}
+    written = generate(
+        G, latent_dim, counts, args.out_root, device, args.batch_size, classes=classes
+    )
+    meta = {
+        "classes": classes,
+        "counts": {
+            classes[l] if classes else str(l): n for l, n in sorted(counts.items())
+        },
+        # The seed recorded here must be the seed that actually produced these
+        # images, not the checkpoint's training seed: a sweep verifies this
+        # value against its own --seed, and a user who forgets to repeat
+        # --seed would otherwise get a pool that looks matched but is not.
+        "seed": args.seed,
+        "checkpoint_seed": ckpt.get("seed"),
+        "subset": ckpt.get("subset"),
+        "test_frac": ckpt.get("test_frac"),
+        "img_size": ckpt["img_size"],
+        "channels": channels,
+        "split_by": ckpt.get("split_by"),
+        "g_norm": ckpt.get("g_norm"),
+        "adv_loss": ckpt.get("adv_loss"),
+        "weighted_sampler": ckpt.get("weighted_sampler"),
+        "fft_denoise": ckpt.get("fft_denoise"),
+        "fft_cutoff": ckpt.get("fft_cutoff"),
+        "generator": str(args.ckpt),
+    }
     (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    print("Generation finished ->", args.out_root,
-          f"({sum(len(v) for v in written.values())} images)")
+    print(
+        "Generation finished ->",
+        args.out_root,
+        f"({sum(len(v) for v in written.values())} images)",
+    )
 
 
 if __name__ == "__main__":

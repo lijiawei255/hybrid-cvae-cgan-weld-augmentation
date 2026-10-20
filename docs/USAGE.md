@@ -24,9 +24,9 @@ CPU or GPU.
 ## Journal-extension switches
 
 The README Quickstart is the **recommended** LoHi-WELD configuration. Four
-`train_joint.py` switches implement components that appear only in the
-journal extension (MSSP 2026). All four default to the conference-paper
-behaviour.
+`train_joint.py` switches implement components that appear only in the journal
+extension (MSSP 2026), plus `--monitor`, which selects the metric their schedule
+watches. All four default to the conference-paper behaviour.
 
 | switch | default | journal-extension value | status |
 |---|---|---|---|
@@ -117,23 +117,28 @@ dataset-specific:
 
 ### Porting checklist
 
-1. One subfolder per class under `--data_root`.
+1. One subfolder per class under `--data_root`; empty class folders are refused.
 2. Class names everywhere (`--subset`, `--counts`, generated-pool metadata).
-3. `--channels 3` for RGB, `--channels 1` for grayscale; `--img_size` divisible by 16.
-4. Match `--subset` to your minority count and desired `N_max`.
-5. If you enable `--fft_denoise`, pass it to both `train_joint.py` and `eval_fid.py`.
+3. `--channels 3` for RGB, `--channels 1` for grayscale (no other value);
+   `--img_size` divisible by 16.
+4. Match `--subset` to your minority count and desired `N_max`. By default it
+   must name every class with a positive count; use `--allow_partial_subset` if
+   you deliberately train on a subset and want validation/FID restricted too.
+5. If you enable `--fft_denoise`, pass it to `train_joint.py`,
+   `train_classifier.py`, `eval_fid.py` and `make_class_figures.py` alike.
 6. Retrain the classifier sweep with the same `--subset`, `--seed`, and
    `--test_frac`, against a pool generated from the same **unchanged** crop
-   data. `verify_generation_meta` checks the split configuration, not data
-   identity - regenerate the pool after re-cropping, adding or renaming
-   images, because those change the actual split without changing the
-   recorded flags.
+   data. `verify_generation_meta` checks the split configuration and the FFT
+   settings, not data identity - regenerate the pool after re-cropping, adding
+   or renaming images, because those change the actual split without changing
+   the recorded flags. Add `--strict_meta` for new pools so absent fields are
+   errors rather than warnings.
 
 ## Repository layout
 
 ```
 src/models.py             encoder, decoder (= generator), discriminator, losses
-src/data.py               class-folder loader, FFT denoising, crop-level splits
+src/data.py               class-folder loader, FFT denoising, crop/source splits
 src/augment.py            balance-to-max filling-rate protocol
 src/prepare_yolo_crops.py detection-format datasets -> class-folder crops
 src/train_joint.py        joint CVAE-CGAN training (the paper's single phase)
@@ -144,6 +149,7 @@ src/make_paper_figures.py training curves, sensitivity curve, t-SNE, confusions
 src/make_multiseed_figure.py seed-aggregated sensitivity curve, from CSVs alone
 src/make_comparison.py    real-vs-generated comparison grid
 src/make_class_figures.py per-class close-ups with per-class FID
+src/measure_split_overlap.py  source-frame overlap audit for either split
 src/smoke_test.py         unit checks + end-to-end run on synthetic data
 ```
 
@@ -154,6 +160,9 @@ only record:
 
 - `generate.py --per_class N`: uniform count for every class, ignored once
   `--counts` is given.
+- `prepare_yolo_crops.py --allow_grayscale`: permit `--channels 1` on a colour
+  source tree; without it the crop tool refuses the conversion, matching the
+  training-side policy.
 - `eval_fid.py --no_balance`: compare both trees as-is with their natural
   class mixes, instead of the default class-balanced sampling over shared
   classes.
@@ -164,6 +173,19 @@ only record:
 - `train_classifier.py --allow_missing_meta`: sweep a generated pool that has
   no `meta.json` (only pools written before `meta.json` existed), skipping the
   split-configuration check.
+- `train_classifier.py`, `eval_fid.py` and `make_class_figures.py`
+  `--strict_meta`: turn a pool that has `meta.json` but predates
+  `split_by`/`fft_denoise`/`fft_cutoff` into an error instead of a warning.
+  New pools should always be checked with this; old pools remain usable
+  without it.
+- `train_joint.py --allow_partial_subset` and
+  `train_classifier.py --allow_partial_subset`: permit a `--subset` that omits
+  a class or gives it count 0. Validation, FID and the selection pool are then
+  restricted to the classes actually trained on, rather than silently scoring
+  an unseen class.
+- `make_paper_figures.py --reconstruction_sample`: draw z from the posterior for
+  the reconstruction row instead of decoding the posterior mean. The mean is the
+  deterministic quantity `train_joint.py` validates.
 
 ## Limitations
 
@@ -175,7 +197,8 @@ glance" is the short form.
 - **The "small and imbalanced" condition is simulated** via `--subset`.
 - **The downstream classifier is not the papers' classifier.** ResNet-18 on
   single frames, not LSTM/GRU on 21-frame sequences. Published tables used
-  `--selection final`; the current default is `--selection best_val`.
+  `--selection final`, which is the default again since v0.6.0;
+  `--selection best_val` is an opt-in alternative.
 - **FID is a trend indicator.** Default backend is pytorch-fid; published
   in-repo numbers used `--fid_backend legacy`. Do not mix scales or compare
   to the papers.
@@ -215,7 +238,7 @@ glance" is the short form.
 - **`--selection best_val` selects on a pool the generator also saw.** The
   classifier's leftover validation pool is every train-pool image outside
   `--subset`, and the generator's own validation and FID reference set (200 per
-  class) is drawn from that same leftover. So under the current default the
+  class) is drawn from that same leftover. Under `--selection best_val` the
   classifier picks its reported epoch using images the generator was early
   stopped on. The held-out test set is untouched, so this is not test leakage,
   but it is a soft optimistic bias that the published `--selection final`

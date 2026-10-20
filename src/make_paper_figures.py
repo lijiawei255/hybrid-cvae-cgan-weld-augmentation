@@ -15,19 +15,27 @@ Every plotting function is pure - it takes plain arrays and writes a file - so
 each one is unit-testable without training a model. Only the CLI touches
 checkpoints and the GPU.
 """
+
 import argparse
 import csv
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
 from augment import filling_rate_counts
-from data import (ClassFolderDataset, assert_channels_match_data, count_by_class,
-                  make_splits, parse_name_counts, sample_named_subset)
+from data import (
+    ClassFolderDataset,
+    assert_channels_match_data,
+    count_by_class,
+    make_splits,
+    parse_name_counts,
+    sample_named_subset,
+)
 from models import Decoder, Encoder, reparameterize
 
 
@@ -36,7 +44,8 @@ from models import Decoder, Encoder, reparameterize
 # --------------------------------------------------------------------------- #
 def read_history_csv(path):
     """history.csv -> {column: [values]}; 'epoch' as ints, everything else floats."""
-    rows = list(csv.DictReader(Path(path).open(encoding="utf-8")))
+    with Path(path).open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
     if not rows:
         raise ValueError(f"{path} has no data rows")
     out = {key: [] for key in rows[0]}
@@ -49,8 +58,9 @@ def read_history_csv(path):
 def read_sweep_csv(path):
     """sweep_metrics.csv -> {ratio: {metric: value}}."""
     out = {}
-    for row in csv.DictReader(Path(path).open(encoding="utf-8")):
-        out.setdefault(float(row["ratio"]), {})[row["metric"]] = float(row["value"])
+    with Path(path).open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            out.setdefault(float(row["ratio"]), {})[row["metric"]] = float(row["value"])
     if not out:
         raise ValueError(f"{path} has no data rows")
     return out
@@ -63,8 +73,9 @@ def build_distribution_series(class_names, real_counts, synthetic_counts):
     """Per-class real counts, and the same plus the balance-to-max synthetic fill."""
     return {
         "real (imbalanced)": [real_counts[name] for name in class_names],
-        "real + synthetic (balance-to-max)":
-            [real_counts[name] + synthetic_counts[name] for name in class_names],
+        "real + synthetic (balance-to-max)": [
+            real_counts[name] + synthetic_counts[name] for name in class_names
+        ],
     }
 
 
@@ -76,7 +87,9 @@ def save_class_distribution(class_names, series, output):
         ax.bar(x + (i - (len(series) - 1) / 2) * width, values, width, label=name)
     ax.set_xticks(x, class_names)
     ax.set_ylabel("images")
-    ax.set_title("Class distribution: original imbalance vs balance-to-max augmentation")
+    ax.set_title(
+        "Class distribution: original imbalance vs balance-to-max augmentation"
+    )
     ax.legend(frameon=False)
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
@@ -88,12 +101,14 @@ def save_class_distribution(class_names, series, output):
 # --------------------------------------------------------------------------- #
 def save_training_curves(history, output):
     """Six panels of training history: the loss components and FID per epoch."""
-    panels = [("recon", "reconstruction (MSE)", False),
-              ("kl", "KL divergence", False),
-              ("perc", "VGG19 perceptual", False),
-              ("loss_g", "generator loss (total)", False),
-              ("loss_d", "discriminator loss", False),
-              ("fid", "FID vs real validation set", True)]
+    panels = [
+        ("recon", "reconstruction (MSE)", False),
+        ("kl", "KL divergence", False),
+        ("perc", "VGG19 perceptual", False),
+        ("loss_g", "generator loss (total)", False),
+        ("loss_d", "discriminator loss", False),
+        ("fid", "FID vs real validation set", True),
+    ]
     epochs = history["epoch"]
     fig, axes = plt.subplots(2, 3, figsize=(13, 6.5))
     for ax, (key, label, lower_better) in zip(axes.ravel(), panels):
@@ -102,10 +117,18 @@ def save_training_curves(history, output):
         ax.plot(np.array(epochs)[finite], values[finite], marker="o", ms=2.5, lw=1.2)
         if key == "recon" and "val_recon" in history:
             val = np.array(history["val_recon"], dtype=float)
-            ax.plot(np.array(epochs)[finite], val[finite], lw=1.2, ls="--",
-                    color="tab:orange", label="validation")
+            ax.plot(
+                np.array(epochs)[finite],
+                val[finite],
+                lw=1.2,
+                ls="--",
+                color="tab:orange",
+                label="validation",
+            )
             ax.legend(frameon=False, fontsize=8)
-        ax.set_title(f"{label}{' (lower is better)' if lower_better else ''}", fontsize=9)
+        ax.set_title(
+            f"{label}{' (lower is better)' if lower_better else ''}", fontsize=9
+        )
         ax.set_xlabel("epoch", fontsize=8)
         ax.grid(alpha=0.25)
     fig.suptitle("Joint CVAE-CGAN training history", y=0.995)
@@ -124,10 +147,26 @@ def save_filling_rate_curve(sweep, class_names, output):
     own rather than averaged away.
     """
     ratios = sorted(sweep)
+    missing = [
+        name
+        for name in class_names
+        if any(f"f1:{name}" not in sweep[ratio] for ratio in ratios)
+    ]
+    if missing:
+        raise ValueError(
+            f"class(es) {missing} have no f1:<name> metric in every sweep row; "
+            f"--subset classes must match the sweep's classes"
+        )
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
 
-    for metric, style in [("accuracy", "-o"), ("macro_f1", "-s"), ("weighted_f1", "-^")]:
-        axes[0].plot(ratios, [sweep[r][metric] for r in ratios], style, ms=4, label=metric)
+    for metric, style in [
+        ("accuracy", "-o"),
+        ("macro_f1", "-s"),
+        ("weighted_f1", "-^"),
+    ]:
+        axes[0].plot(
+            ratios, [sweep[r][metric] for r in ratios], style, ms=4, label=metric
+        )
     axes[0].set_xlabel("filling rate (fraction of the gap to $N_{max}$ closed)")
     axes[0].set_ylabel("score")
     axes[0].set_title("Overall metrics on the held-out real test set")
@@ -137,7 +176,9 @@ def save_filling_rate_curve(sweep, class_names, output):
     axes[0].grid(alpha=0.25)
 
     for name in class_names:
-        axes[1].plot(ratios, [sweep[r][f"f1:{name}"] for r in ratios], "-o", ms=4, label=name)
+        axes[1].plot(
+            ratios, [sweep[r][f"f1:{name}"] for r in ratios], "-o", ms=4, label=name
+        )
     axes[1].set_xlabel("filling rate")
     axes[1].set_ylabel("F1")
     axes[1].set_title("Per-class F1")
@@ -169,10 +210,14 @@ def aggregate_seed_metrics(seeds, metric):
                 per_ratio.setdefault(float(ratio), []).append(float(metrics[metric]))
     if not per_ratio:
         raise ValueError(f"no seed reports metric {metric!r}")
-    return {ratio: (float(np.mean(values)),
-                    float(np.std(values, ddof=1)) if len(values) > 1 else 0.0,
-                    len(values))
-            for ratio, values in per_ratio.items()}
+    return {
+        ratio: (
+            float(np.mean(values)),
+            float(np.std(values, ddof=1)) if len(values) > 1 else 0.0,
+            len(values),
+        )
+        for ratio, values in per_ratio.items()
+    }
 
 
 def _plot_seed_band(ax, seeds, metric, color, label, band_label=None):
@@ -183,19 +228,35 @@ def _plot_seed_band(ax, seeds, metric, color, label, band_label=None):
     std = np.array([agg[r][1] for r in ratios])
     counts = [agg[r][2] for r in ratios]
     full = max(counts)
-    ax.plot(ratios, mean, "-o", ms=4, color=color, label=f"{label}, mean of {full} seeds")
-    ax.fill_between(ratios, mean - std, mean + std, color=color, alpha=0.18,
-                    label=band_label)
+    ax.plot(
+        ratios, mean, "-o", ms=4, color=color, label=f"{label}, mean of {full} seeds"
+    )
+    ax.fill_between(
+        ratios, mean - std, mean + std, color=color, alpha=0.18, label=band_label
+    )
     for ratio, value, count in zip(ratios, mean, counts):
         if count < full:
-            ax.annotate(f"n={count}", (ratio, value), textcoords="offset points",
-                        xytext=(0, 9), ha="center", fontsize=7, color="tab:red")
+            ax.annotate(
+                f"n={count}",
+                (ratio, value),
+                textcoords="offset points",
+                xytext=(0, 9),
+                ha="center",
+                fontsize=7,
+                color="tab:red",
+            )
     return ratios
 
 
-def save_multi_seed_filling_rate(seeds, references, minority, output,
-                                 arm_label="GroupNorm + balanced sampler",
-                                 extra_arms=None, title=None):
+def save_multi_seed_filling_rate(
+    seeds,
+    references,
+    minority,
+    output,
+    arm_label="GroupNorm + balanced sampler",
+    extra_arms=None,
+    title=None,
+):
     """Seed-aggregated filling-rate curve against labelled reference arms.
 
     The single-seed curve cannot distinguish a real effect from seed noise, so the
@@ -206,20 +267,35 @@ def save_multi_seed_filling_rate(seeds, references, minority, output,
     """
     ref_colors = ["tab:orange", "tab:green", "tab:purple", "tab:brown"]
     arm_colors = ["tab:red", "tab:cyan", "tab:olive"]
-    panels = [("macro_f1", "macro-F1"),
-              (f"f1:{minority}", f"{minority} F1 (minority class)")]
+    panels = [
+        ("macro_f1", "macro-F1"),
+        (f"f1:{minority}", f"{minority} F1 (minority class)"),
+    ]
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
 
     for ax, (metric, label) in zip(axes, panels):
-        ratios = _plot_seed_band(ax, seeds, metric, "tab:blue", arm_label,
-                                 band_label="$\\pm$1 sample std over seeds")
+        ratios = _plot_seed_band(
+            ax,
+            seeds,
+            metric,
+            "tab:blue",
+            arm_label,
+            band_label="$\\pm$1 sample std over seeds",
+        )
         for color, (name, arm_seeds) in zip(arm_colors, (extra_arms or {}).items()):
             _plot_seed_band(ax, arm_seeds, metric, color, name)
 
         for color, (name, sweep) in zip(ref_colors, references.items()):
             ref_ratios = sorted(r for r in sweep if metric in sweep[r])
-            ax.plot(ref_ratios, [sweep[r][metric] for r in ref_ratios], "--s", ms=3.5,
-                    lw=1.1, color=color, label=name)
+            ax.plot(
+                ref_ratios,
+                [sweep[r][metric] for r in ref_ratios],
+                "--s",
+                ms=3.5,
+                lw=1.1,
+                color=color,
+                label=name,
+            )
 
         ax.set_xlabel("filling rate (fraction of the gap to $N_{max}$ closed)")
         ax.set_ylabel(label)
@@ -228,8 +304,11 @@ def save_multi_seed_filling_rate(seeds, references, minority, output,
         ax.grid(alpha=0.25)
         ax.legend(frameon=False, fontsize=7.5)
 
-    fig.suptitle(title or "Filling-rate sensitivity across seeds, against single-seed "
-                 "reference arms", y=0.995)
+    fig.suptitle(
+        title
+        or "Filling-rate sensitivity across seeds, against single-seed reference arms",
+        y=0.995,
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     _save(fig, output)
 
@@ -244,10 +323,28 @@ def normalize_confusion_matrix(matrix):
     return np.divide(matrix, totals, out=np.zeros_like(matrix), where=totals != 0)
 
 
-def save_confusion_matrices(class_names, condition_a, condition_b, output,
-                            labels=("r = 0.0: real only", "r = 1.0: balance-to-max")):
+def save_confusion_matrices(
+    class_names,
+    condition_a,
+    condition_b,
+    output,
+    labels=("r = 0.0: real only", "r = 1.0: balance-to-max"),
+):
     """Side-by-side row-normalised confusion matrices for two conditions."""
-    matrices = [normalize_confusion_matrix(condition_a), normalize_confusion_matrix(condition_b)]
+    expected = (len(class_names), len(class_names))
+    if len(labels) != 2:
+        raise ValueError(f"expected exactly two labels, got {len(labels)}")
+    for name, matrix in (("condition_a", condition_a), ("condition_b", condition_b)):
+        if np.asarray(matrix).shape != expected:
+            raise ValueError(
+                f"{name} has shape {np.asarray(matrix).shape}, expected {expected} "
+                f"for class_names {class_names}; the figure would label rows with "
+                f"the wrong classes"
+            )
+    matrices = [
+        normalize_confusion_matrix(condition_a),
+        normalize_confusion_matrix(condition_b),
+    ]
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
     image = None
     for axis, matrix, title in zip(axes, matrices, labels):
@@ -257,8 +354,14 @@ def save_confusion_matrices(class_names, condition_a, condition_b, output,
         axis.set_xlabel("predicted class")
         axis.set_title(title)
         for row, column in np.ndindex(matrix.shape):
-            axis.text(column, row, f"{matrix[row, column]:.2f}", ha="center", va="center",
-                      color="white" if matrix[row, column] > 0.5 else "black")
+            axis.text(
+                column,
+                row,
+                f"{matrix[row, column]:.2f}",
+                ha="center",
+                va="center",
+                color="white" if matrix[row, column] > 0.5 else "black",
+            )
     axes[0].set_ylabel("true class")
     fig.suptitle("Held-out real-test confusion matrices")
     # Reserve the right-hand gutter BEFORE creating the colorbar: creating it first
@@ -279,12 +382,15 @@ def _imshow(axis, image):
     elif image.ndim == 3 and image.shape[0] == 3:
         axis.imshow(np.transpose(image, (1, 2, 0)))
     else:
-        raise ValueError(f"expected a CHW image with 1 or 3 channels, got {image.shape}")
+        raise ValueError(
+            f"expected a CHW image with 1 or 3 channels, got {image.shape}"
+        )
     axis.axis("off")
 
 
-def save_reconstruction_comparison(real, reconstructed, generated, output,
-                                   class_names=None, n_per_class=None):
+def save_reconstruction_comparison(
+    real, reconstructed, generated, output, class_names=None, n_per_class=None
+):
     """Three rows - real, CVAE reconstruction, generation from z ~ N(0, I).
 
     Columns are expected to be grouped by class. When `class_names` and
@@ -299,7 +405,9 @@ def save_reconstruction_comparison(real, reconstructed, generated, output,
         display = images[:n].detach().cpu().clamp(0, 1).float()
         for column in range(n):
             _imshow(axes[row_index, column], display[column].numpy())
-        axes[row_index, 0].set_ylabel(label, fontsize=8, rotation=0, ha="right", va="center")
+        axes[row_index, 0].set_ylabel(
+            label, fontsize=8, rotation=0, ha="right", va="center"
+        )
         axes[row_index, 0].tick_params(length=0)
     if class_names and n_per_class:
         for position, name in enumerate(class_names):
@@ -317,7 +425,9 @@ def save_latent_projection(points, labels, class_names, output):
     for label, class_name in enumerate(class_names):
         mask = labels == label
         if mask.any():
-            ax.scatter(points[mask, 0], points[mask, 1], s=14, alpha=0.75, label=class_name)
+            ax.scatter(
+                points[mask, 0], points[mask, 1], s=14, alpha=0.75, label=class_name
+            )
     ax.set_xlabel("t-SNE dimension 1")
     ax.set_ylabel("t-SNE dimension 2")
     ax.set_title("CVAE encoder latent-space projection")
@@ -333,7 +443,8 @@ def encoder_latents(enc, loader, device, limit=None):
     with torch.no_grad():
         for x, y in loader:
             mu, _ = enc(x.to(device), y.to(device))
-            mus.append(mu.cpu()); ys.append(y)
+            mus.append(mu.cpu())
+            ys.append(y)
             if limit and sum(m.size(0) for m in mus) >= limit:
                 break
     enc.train()
@@ -341,15 +452,23 @@ def encoder_latents(enc, loader, device, limit=None):
     return points[:limit], torch.cat(ys).numpy()[:limit]
 
 
-def reconstruction_triplet(enc, dec, x, y, latent_dim, device):
-    """(real, reconstruction, generation from noise) for one batch."""
-    dec.eval(); enc.eval()
+def reconstruction_triplet(enc, dec, x, y, latent_dim, device, sample=False):
+    """(real, reconstruction, generation from noise) for one batch.
+
+    ``sample=False`` decodes the posterior mean, matching what ``train_joint.py``
+    measures during validation. Set ``sample=True`` to draw z instead, which is
+    what an earlier version of this figure did.
+    """
+    dec.eval()
+    enc.eval()
     with torch.no_grad():
         x, y = x.to(device), y.to(device)
         mu, logvar = enc(x, y)
-        recon = dec(reparameterize(mu, logvar), y)
+        z = reparameterize(mu, logvar) if sample else mu
+        recon = dec(z, y)
         gen = dec(torch.randn(x.size(0), latent_dim, device=device), y)
-    dec.train(); enc.train()
+    dec.train()
+    enc.train()
     return x.cpu(), recon.cpu(), gen.cpu()
 
 
@@ -365,81 +484,153 @@ def _save(fig, output):
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_root", default=None,
-                    help="the real image tree. Needed only for the model-dependent "
-                         "figures; without it the CSV-only figures are still written.")
-    ap.add_argument("--ckpt", default=None,
-                    help="joint.pt from train_joint.py. Omit it (together with "
-                         "--data_root) to write only the figures that need no model: "
-                         "class distribution, training curves, filling-rate curve and "
-                         "confusion matrices. Those four reproduce from results/metrics/ "
-                         "alone, with no GPU and no dataset.")
+    ap.add_argument(
+        "--data_root",
+        default=None,
+        help="the real image tree. Needed only for the model-dependent "
+        "figures; without it the CSV-only figures are still written.",
+    )
+    ap.add_argument(
+        "--ckpt",
+        default=None,
+        help="joint.pt from train_joint.py. Omit it (together with "
+        "--data_root) to write only the figures that need no model: "
+        "class distribution, training curves, filling-rate curve and "
+        "confusion matrices. Those four reproduce from results/metrics/ "
+        "alone, with no GPU and no dataset.",
+    )
     ap.add_argument("--history", required=True, help="history.csv from train_joint.py")
-    ap.add_argument("--sweep", required=True, help="sweep_metrics.csv from train_classifier.py")
+    ap.add_argument(
+        "--sweep", required=True, help="sweep_metrics.csv from train_classifier.py"
+    )
     ap.add_argument("--cm_dir", required=True, help="directory holding cm_r*.npy")
-    ap.add_argument("--subset", required=True,
-                    help="the real subset the generator was trained on, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'")
-    ap.add_argument("--cm_ratios", default="0.0,1.0",
-                    help="which two filling rates to compare in the confusion-matrix figure")
+    ap.add_argument(
+        "--subset",
+        required=True,
+        help="the real subset the generator was trained on, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'",
+    )
+    ap.add_argument(
+        "--cm_ratios",
+        default="0.0,1.0",
+        help="which two filling rates to compare in the confusion-matrix figure",
+    )
     ap.add_argument("--img_size", type=int, default=224)
-    ap.add_argument("--channels", type=int, default=3)
+    ap.add_argument("--channels", type=int, default=3, choices=(1, 3))
     ap.add_argument("--fft_denoise", action="store_true")
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
     ap.add_argument("--test_frac", type=float, default=0.2)
-    ap.add_argument("--split_by", choices=("crop", "source"), default="crop",
-                    help="must match the checkpoint's; see train_joint.py --split_by")
+    ap.add_argument(
+        "--split_by",
+        choices=("crop", "source"),
+        default="crop",
+        help="must match the checkpoint's; see train_joint.py --split_by",
+    )
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--n_show", type=int, default=4,
-                    help="images per class in the comparison figure (columns = classes x this)")
+    ap.add_argument(
+        "--n_show",
+        type=int,
+        default=4,
+        help="images per class in the comparison figure (columns = classes x this)",
+    )
     ap.add_argument("--tsne_samples", type=int, default=800)
     ap.add_argument("--num_workers", type=int, default=4)
+    ap.add_argument(
+        "--reconstruction_sample",
+        action="store_true",
+        help="draw z from the posterior for the reconstruction row instead of "
+        "decoding the posterior mean. The mean is the deterministic quantity "
+        "train_joint.py validates; this flag reproduces the older stochastic figure.",
+    )
     ap.add_argument("--out_dir", default="results")
     args = ap.parse_args()
 
     if not 0.0 < args.test_frac < 1.0:
         raise SystemExit(f"--test_frac must be in (0, 1), got {args.test_frac}")
+    if args.img_size < 16:
+        raise SystemExit(f"--img_size must be >= 16, got {args.img_size}")
+    if args.n_show < 1:
+        raise SystemExit(f"--n_show must be >= 1, got {args.n_show}")
+    if args.tsne_samples < 1:
+        raise SystemExit(f"--tsne_samples must be >= 1, got {args.tsne_samples}")
+    if args.num_workers < 0:
+        raise SystemExit(f"--num_workers must be >= 0, got {args.num_workers}")
+    if not 0.0 < args.fft_cutoff <= 1.0:
+        raise SystemExit(f"--fft_cutoff must be in (0, 1], got {args.fft_cutoff}")
+    for csv_path, flag in (
+        (Path(args.history), "--history"),
+        (Path(args.sweep), "--sweep"),
+    ):
+        if not csv_path.is_file():
+            raise SystemExit(f"{flag} file not found: {csv_path}")
 
-    out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if bool(args.ckpt) != bool(args.data_root):
         raise SystemExit(
             "--ckpt and --data_root go together: the model-dependent figures need "
-            "both. Pass neither to write only the CSV-only figures.")
+            "both. Pass neither to write only the CSV-only figures."
+        )
     model_figures = bool(args.ckpt)
 
     if model_figures:
         assert_channels_match_data(args.data_root, args.channels)
-        ds = ClassFolderDataset(args.data_root, args.img_size, args.channels,
-                                args.fft_denoise, args.fft_cutoff)
+        ds = ClassFolderDataset(
+            args.data_root,
+            args.img_size,
+            args.channels,
+            args.fft_denoise,
+            args.fft_cutoff,
+        )
         classes = ds.classes
-        train_pool, _ = make_splits(ds.samples, args.test_frac, args.seed,
-                                    args.split_by)
-        subset_idx = sample_named_subset(ds, parse_name_counts(args.subset),
-                                         train_pool, args.seed)
+        train_pool, _ = make_splits(
+            ds.samples, args.test_frac, args.seed, args.split_by
+        )
+        subset_idx = sample_named_subset(
+            ds, parse_name_counts(args.subset), train_pool, args.seed
+        )
         real_counts = count_by_class(ds, subset_idx)
     else:
-        # Without the dataset, --subset is the authority on both the class names
-        # and their counts. ClassFolderDataset labels classes by sorted directory
-        # name, so sorting the subset keys reproduces the same label order the
-        # confusion matrices were written with.
+        # Without the dataset, the sweep is the authority on class names (the
+        # confusion matrices are square over exactly those classes), while
+        # --subset supplies their counts. Deriving the list from --subset alone
+        # would label a 4x4 matrix with 3 names whenever a class was omitted.
         real_counts = parse_name_counts(args.subset)
-        classes = sorted(real_counts)
-        print(f"no --ckpt: writing the four figures that need no model, with "
-              f"classes {classes} taken from --subset")
+        sweep_classes = sorted(
+            {
+                key.split(":", 1)[1]
+                for metrics in read_sweep_csv(args.sweep).values()
+                for key in metrics
+                if key.startswith("f1:")
+            }
+        )
+        if not sweep_classes:
+            raise SystemExit(
+                f"{args.sweep} has no f1:<class> metrics; cannot infer class names"
+            )
+        if set(sweep_classes) != set(real_counts):
+            raise SystemExit(
+                f"--subset classes {sorted(real_counts)} do not match the sweep "
+                f"classes {sweep_classes}; the class-distribution figure needs a "
+                f"count for every sweep class"
+            )
+        classes = sweep_classes
+        print(
+            f"no --ckpt: writing the four figures that need no model, with "
+            f"classes {classes} taken from {args.sweep}"
+        )
     synthetic_counts = filling_rate_counts(real_counts, 1.0)
 
     # ---- class distribution (no model needed) ----
-    save_class_distribution(classes,
-                            build_distribution_series(classes, real_counts, synthetic_counts),
-                            out / "class_distribution.png")
+    save_class_distribution(
+        classes,
+        build_distribution_series(classes, real_counts, synthetic_counts),
+        out / "class_distribution.png",
+    )
     print("wrote", out / "class_distribution.png")
 
     # ---- training curves ----
-    for csv_path, flag in ((Path(args.history), "--history"),
-                           (Path(args.sweep), "--sweep")):
-        if not csv_path.is_file():
-            raise SystemExit(f"{flag} file not found: {csv_path}")
     save_training_curves(read_history_csv(args.history), out / "training_curves.png")
     print("wrote", out / "training_curves.png")
 
@@ -456,8 +647,10 @@ def main():
     for r in cm_ratios:
         cm_path = Path(args.cm_dir) / f"cm_r{r:g}.npy"
         if not cm_path.is_file():
-            raise SystemExit(f"{cm_path} not found; --cm_dir must hold the "
-                             f"cm_r*.npy files train_classifier.py writes")
+            raise SystemExit(
+                f"{cm_path} not found; --cm_dir must hold the "
+                f"cm_r*.npy files train_classifier.py writes"
+            )
         matrices.append(np.load(cm_path))
 
     def ratio_label(r):
@@ -467,9 +660,13 @@ def main():
             return f"r = {r:g}: balance-to-max"
         return f"r = {r:g}: partial fill"
 
-    save_confusion_matrices(classes, matrices[0], matrices[1],
-                            out / "confusion_matrices.png",
-                            labels=(ratio_label(cm_ratios[0]), ratio_label(cm_ratios[1])))
+    save_confusion_matrices(
+        classes,
+        matrices[0],
+        matrices[1],
+        out / "confusion_matrices.png",
+        labels=(ratio_label(cm_ratios[0]), ratio_label(cm_ratios[1])),
+    )
     print("wrote", out / "confusion_matrices.png")
 
     # ---- model-dependent figures ----
@@ -482,37 +679,88 @@ def main():
         raise SystemExit(
             f"checkpoint {args.ckpt} was trained on classes {ckpt_classes} but "
             f"{args.data_root} has {classes}; the figures would be labelled with "
-            f"the wrong class names")
+            f"the wrong class names"
+        )
     for flag, value in (("--seed", args.seed), ("--test_frac", args.test_frac)):
         recorded = ckpt.get(flag.lstrip("-"))
         if recorded is not None and recorded != value:
             raise SystemExit(
                 f"{flag} {value!r} but checkpoint {args.ckpt} was trained with "
-                f"{recorded!r}; the figures would mix two different splits")
+                f"{recorded!r}; the figures would mix two different splits"
+            )
     # Compare subsets as parsed mappings, so a reordered 'a=1,b=2' against a
     # recorded 'b=2,a=1' is not a false alarm; a different mapping still refuses.
     recorded_subset = ckpt.get("subset")
-    if (recorded_subset is not None
-            and parse_name_counts(recorded_subset) != parse_name_counts(args.subset)):
+    if recorded_subset is not None and parse_name_counts(
+        recorded_subset
+    ) != parse_name_counts(args.subset):
         raise SystemExit(
             f"--subset {args.subset!r} but checkpoint {args.ckpt} was trained with "
-            f"{recorded_subset!r}; the figures would mix two different splits")
+            f"{recorded_subset!r}; the figures would mix two different splits"
+        )
     if ckpt.get("img_channels") not in (None, args.channels):
         raise SystemExit(
             f"--channels {args.channels} but checkpoint {args.ckpt} was trained "
             f"with img_channels={ckpt['img_channels']}; the loaded model would "
-            f"not match the data pipeline")
+            f"not match the data pipeline"
+        )
     if ckpt.get("img_size") not in (None, args.img_size):
         raise SystemExit(
             f"--img_size {args.img_size} but checkpoint {args.ckpt} was trained "
             f"with img_size={ckpt['img_size']}; the loaded model would not match "
-            f"the data pipeline")
+            f"the data pipeline"
+        )
+    recorded_split = ckpt.get("split_by")
+    if recorded_split is None:
+        print(
+            f"warning: checkpoint {args.ckpt} records no split_by; assuming the "
+            f"default crop protocol"
+        )
+    elif recorded_split != args.split_by:
+        raise SystemExit(
+            f"--split_by {args.split_by} but checkpoint {args.ckpt} was trained "
+            f"with split_by={recorded_split}; the figures would mix two splits"
+        )
+    recorded_fft = ckpt.get("fft_denoise")
+    if recorded_fft is None:
+        print(
+            f"warning: checkpoint {args.ckpt} records no fft_denoise; the figure "
+            f"cannot verify the preprocessing"
+        )
+    elif recorded_fft != args.fft_denoise:
+        raise SystemExit(
+            f"--fft_denoise {args.fft_denoise} but checkpoint {args.ckpt} was "
+            f"trained with fft_denoise={recorded_fft}"
+        )
+    recorded_cutoff = ckpt.get("fft_cutoff")
+    if (
+        args.fft_denoise
+        and recorded_cutoff is not None
+        and abs(recorded_cutoff - args.fft_cutoff) > 1e-12
+    ):
+        raise SystemExit(
+            f"--fft_cutoff {args.fft_cutoff} but checkpoint {args.ckpt} was "
+            f"trained with fft_cutoff={recorded_cutoff}"
+        )
     g_norm = ckpt.get("g_norm", "batch")  # checkpoints predating --g_norm are batch
-    enc = Encoder(ckpt["img_channels"], ckpt["num_classes"], ckpt["latent_dim"],
-                  ckpt["base_ch"], ckpt["img_size"], norm=g_norm).to(device)
-    dec = Decoder(ckpt["img_channels"], ckpt["num_classes"], ckpt["latent_dim"],
-                  ckpt["base_ch"], ckpt["img_size"], norm=g_norm).to(device)
-    enc.load_state_dict(ckpt["enc"]); dec.load_state_dict(ckpt["dec"])
+    enc = Encoder(
+        ckpt["img_channels"],
+        ckpt["num_classes"],
+        ckpt["latent_dim"],
+        ckpt["base_ch"],
+        ckpt["img_size"],
+        norm=g_norm,
+    ).to(device)
+    dec = Decoder(
+        ckpt["img_channels"],
+        ckpt["num_classes"],
+        ckpt["latent_dim"],
+        ckpt["base_ch"],
+        ckpt["img_size"],
+        norm=g_norm,
+    ).to(device)
+    enc.load_state_dict(ckpt["enc"])
+    dec.load_state_dict(ckpt["dec"])
     print(f"loaded checkpoint from best epoch {ckpt.get('best_epoch')}")
 
     per_class_idx = []
@@ -521,29 +769,54 @@ def main():
         if len(available) < args.n_show:
             raise SystemExit(
                 f"class '{name}' has only {len(available)} images in the subset but "
-                f"--n_show is {args.n_show}; the column labels would be misaligned")
-        per_class_idx.extend(available[:args.n_show])
+                f"--n_show is {args.n_show}; the column labels would be misaligned"
+            )
+        per_class_idx.extend(available[: args.n_show])
     show_loader = torch.utils.data.DataLoader(
-        torch.utils.data.Subset(ds, per_class_idx), batch_size=len(per_class_idx),
-        shuffle=False)
+        torch.utils.data.Subset(ds, per_class_idx),
+        batch_size=len(per_class_idx),
+        shuffle=False,
+    )
     x, y = next(iter(show_loader))
-    real, recon, gen = reconstruction_triplet(enc, dec, x, y, ckpt["latent_dim"], device)
-    save_reconstruction_comparison(real, recon, gen, out / "reconstruction_comparison.png",
-                                   class_names=classes, n_per_class=args.n_show)
+    real, recon, gen = reconstruction_triplet(
+        enc,
+        dec,
+        x,
+        y,
+        ckpt["latent_dim"],
+        device,
+        sample=args.reconstruction_sample,
+    )
+    save_reconstruction_comparison(
+        real,
+        recon,
+        gen,
+        out / "reconstruction_comparison.png",
+        class_names=classes,
+        n_per_class=args.n_show,
+    )
     print("wrote", out / "reconstruction_comparison.png")
 
     latent_loader = torch.utils.data.DataLoader(
-        torch.utils.data.Subset(ds, subset_idx), batch_size=64, shuffle=False,
-        num_workers=args.num_workers, persistent_workers=args.num_workers > 0)
-    points, labels = encoder_latents(enc, latent_loader, device, limit=args.tsne_samples)
+        torch.utils.data.Subset(ds, subset_idx),
+        batch_size=64,
+        shuffle=False,
+        num_workers=args.num_workers,
+        persistent_workers=args.num_workers > 0,
+    )
+    points, labels = encoder_latents(
+        enc, latent_loader, device, limit=args.tsne_samples
+    )
     if len(points) < 3:
         print(f"note: only {len(points)} latent points; skipping latent_tsne.png")
         return
     from sklearn.manifold import TSNE
+
     # perplexity must be < n_samples; the clamp keeps even tiny subsets legal.
     perplexity = min(30, max(2, (len(points) - 1) // 3), len(points) - 1)
-    projected = TSNE(n_components=2, init="pca", random_state=args.seed,
-                     perplexity=perplexity).fit_transform(points)
+    projected = TSNE(
+        n_components=2, init="pca", random_state=args.seed, perplexity=perplexity
+    ).fit_transform(points)
     save_latent_projection(projected, labels, classes, out / "latent_tsne.png")
     print("wrote", out / "latent_tsne.png")
 

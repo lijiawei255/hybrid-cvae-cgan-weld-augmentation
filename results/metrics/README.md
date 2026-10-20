@@ -14,9 +14,10 @@ Three file kinds:
 * `sweep_metrics.csv` - long-format `ratio,metric,value` exports written by
   `src/train_classifier.py`: per-class precision/recall/F1/support, accuracy,
   macro/weighted F1, and the real/synthetic training-set sizes per ratio.
-  Every sweep was scored at the final epoch - the `--selection final`
-  protocol behind the published tables (the v0.2.0-era `sweep` predates the
-  flag and used the same behaviour).
+  Every sweep in the first table below was scored at the final epoch - the
+  `--selection final` protocol behind the published tables (the v0.2.0-era
+  `sweep` predates the flag and used the same behaviour). The `_bestval`
+  directories added in v0.5.2 are the exception and are marked below.
 * `history.csv` - per-epoch generator training logs written by
   `src/train_joint.py`. The v0.2.0-era `joint_lohi` log predates the `beta`
   column that v0.4.0 added for the KL-annealing schedule. **Every `fid` column

@@ -10,6 +10,7 @@ synthetic samples add noise without actually fixing the imbalance.
 Class identity is expressed by NAME throughout, so this module works unchanged on
 a dataset with different classes or a different class ordering.
 """
+
 import json
 from pathlib import Path
 
@@ -30,8 +31,9 @@ def filling_rate_counts(real_counts, ratio):
     if not 0.0 <= ratio <= 1.0:
         raise ValueError(f"filling rate must be in [0, 1], got {ratio}")
     n_max = max(real_counts.values())
-    return {name: int(round(ratio * (n_max - count)))
-            for name, count in real_counts.items()}
+    return {
+        name: int(round(ratio * (n_max - count))) for name, count in real_counts.items()
+    }
 
 
 def synthetic_prefix(paths, count):
@@ -46,7 +48,8 @@ def synthetic_prefix(paths, count):
     if count > len(ordered):
         raise ValueError(
             f"requested {count} synthetic images but only {len(ordered)} exist; "
-            f"regenerate with a larger count")
+            f"regenerate with a larger count"
+        )
     return ordered[:count]
 
 
@@ -70,78 +73,144 @@ def generated_by_class(gen_root, classes):
         raise FileNotFoundError(
             f"{manifest} is missing, so the class_i folders cannot be mapped to "
             f"class names safely. Regenerate this pool with src/generate.py, which "
-            f"writes the manifest from the checkpoint's own class list.")
-    recorded = [line.strip() for line in
-                manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+            f"writes the manifest from the checkpoint's own class list."
+        )
+    recorded = [
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if recorded != list(classes):
         raise ValueError(
             f"{root} was generated for classes {recorded} but this dataset has "
             f"{list(classes)}; the positional class_i folders would map to the "
             f"wrong classes. Regenerate the pool from a checkpoint trained on "
-            f"this dataset.")
+            f"this dataset."
+        )
 
     out = {}
     for label, name in enumerate(classes):
         folder = root / f"class_{label}"
-        files = sorted(p for p in folder.iterdir()
-                       if p.suffix.lower() in IMG_EXTENSIONS) if folder.is_dir() else []
+        files = (
+            sorted(p for p in folder.iterdir() if p.suffix.lower() in IMG_EXTENSIONS)
+            if folder.is_dir()
+            else []
+        )
         out[name] = files
     if not any(out.values()):
         raise FileNotFoundError(
             f"no generated images under {root}; expected subfolders "
-            f"class_0..class_{len(classes) - 1}")
+            f"class_0..class_{len(classes) - 1}"
+        )
     return out
 
 
-def verify_generation_meta(gen_root, subset, seed, test_frac=None, img_size=None,
-                           channels=None, split_by=None, allow_missing_meta=False):
+def verify_generation_meta(
+    gen_root,
+    subset=None,
+    seed=None,
+    test_frac=None,
+    img_size=None,
+    channels=None,
+    split_by=None,
+    fft_denoise=None,
+    fft_cutoff=None,
+    allow_missing_meta=False,
+    strict_meta=False,
+):
     """Refuse to sweep against a pool generated from a different configuration.
 
     The r=0.0 condition is only meaningful if it is exactly the real data the
     generator trained on. A retyped ``--subset``, a different ``--seed``,
-    ``--test_frac`` or ``--split_by`` would silently compare augmentation against
-    the wrong baseline, and the whole sweep would be measuring nothing.
-    ``--img_size`` and ``--channels`` are checked too: a pool generated at a
-    different input representation is not a valid substitute either.
+    ``--test_frac``, ``--split_by`` or FFT setting would silently compare
+    augmentation against the wrong baseline, and the whole sweep would be
+    measuring nothing. ``--img_size`` and ``--channels`` are checked too: a
+    pool generated at a different input representation is not a valid
+    substitute either.
 
     This compares the split *configuration*, not data identity: re-cropping,
     adding or renaming images changes the actual split without changing any
     recorded flag, so regenerate the pool whenever the crop tree changes.
 
-    A pool with no ``meta.json`` predates the file and cannot be checked at all.
-    That is refused unless ``allow_missing_meta`` is passed, so an unverifiable
-    pool has to be an explicit choice rather than a printed note nobody reads.
+    A pool with no ``meta.json`` predates the file and cannot be checked at
+    all. That is refused unless ``allow_missing_meta`` is passed, so an
+    unverifiable pool has to be an explicit choice rather than a printed note
+    nobody reads. A pool whose ``meta.json`` exists but predates some fields is
+    accepted with a warning by default; ``strict_meta`` turns those missing
+    fields into the same refusal, which is what a new run should use.
     """
     meta_path = Path(gen_root) / "meta.json"
     if not meta_path.is_file():
         if allow_missing_meta:
-            print(f"note: {meta_path} is missing; the split-configuration consistency "
-                  f"check was skipped because --allow_missing_meta was passed")
+            print(
+                f"note: {meta_path} is missing; the split-configuration consistency "
+                f"check was skipped because --allow_missing_meta was passed"
+            )
             return
         raise SystemExit(
             f"{meta_path} is missing, so this pool's split configuration cannot be "
             f"checked against this run. Regenerate the pool with src/generate.py, or "
-            f"pass --allow_missing_meta to sweep it unverified.")
+            f"pass --allow_missing_meta to sweep it unverified."
+        )
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if not isinstance(meta, dict):
+        raise SystemExit(f"{meta_path} is not a JSON object; regenerate the pool")
     problems = []
+    missing = []
     # Subsets are compared as parsed mappings, so a reordered 'a=1,b=2' against
     # a recorded 'b=2,a=1' is not a false alarm; a different mapping still refuses.
-    if (meta.get("subset") is not None
-            and parse_name_counts(meta["subset"]) != parse_name_counts(subset)):
-        problems.append(f"--subset {subset!r} but pool was generated with "
-                        f"{meta['subset']!r}")
-    if meta.get("seed") is not None and meta["seed"] != seed:
-        problems.append(f"--seed {seed} but pool was generated with {meta['seed']}")
-    if (test_frac is not None and meta.get("test_frac") is not None
-            and abs(meta["test_frac"] - test_frac) > 1e-12):
-        problems.append(f"--test_frac {test_frac} but pool was generated with "
-                        f"{meta['test_frac']}")
-    for flag, want, recorded in (("--img_size", img_size, meta.get("img_size")),
-                                 ("--channels", channels, meta.get("channels")),
-                                 ("--split_by", split_by, meta.get("split_by"))):
-        if want is not None and recorded is not None and recorded != want:
+    if subset is not None:
+        if meta.get("subset") is None:
+            missing.append("subset")
+        elif parse_name_counts(meta["subset"]) != parse_name_counts(subset):
+            problems.append(
+                f"--subset {subset!r} but pool was generated with {meta['subset']!r}"
+            )
+    if seed is not None:
+        if meta.get("seed") is None:
+            missing.append("seed")
+        elif meta["seed"] != seed:
+            problems.append(f"--seed {seed} but pool was generated with {meta['seed']}")
+    if test_frac is not None:
+        if meta.get("test_frac") is None:
+            missing.append("test_frac")
+        elif abs(meta["test_frac"] - test_frac) > 1e-12:
+            problems.append(
+                f"--test_frac {test_frac} but pool was generated with "
+                f"{meta['test_frac']}"
+            )
+    for flag, want, recorded in (
+        ("--img_size", img_size, meta.get("img_size")),
+        ("--channels", channels, meta.get("channels")),
+        ("--split_by", split_by, meta.get("split_by")),
+        ("--fft_denoise", fft_denoise, meta.get("fft_denoise")),
+    ):
+        if want is None:
+            continue
+        if recorded is None:
+            missing.append(flag.lstrip("-"))
+        elif recorded != want:
             problems.append(f"{flag} {want} but pool was generated with {recorded}")
+    if fft_cutoff is not None:
+        recorded = meta.get("fft_cutoff")
+        if recorded is None:
+            missing.append("fft_cutoff")
+        elif abs(recorded - fft_cutoff) > 1e-12:
+            problems.append(
+                f"--fft_cutoff {fft_cutoff} but pool was generated with {recorded}"
+            )
+    if missing:
+        message = (
+            f"{meta_path} has no recorded {', '.join(sorted(set(missing)))}; the "
+            f"pool predates those fields"
+        )
+        if strict_meta:
+            problems.append(message + " (--strict_meta)")
+        else:
+            print(f"warning: {message}; consistency checks skipped for them")
     if problems:
         raise SystemExit(
             f"{gen_root} was generated from a different split than this run uses: "
-            + "; ".join(problems) + ". Regenerate the pool or match the flags.")
+            + "; ".join(problems)
+            + ". Regenerate the pool or match the flags."
+        )

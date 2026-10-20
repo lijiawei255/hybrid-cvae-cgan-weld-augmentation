@@ -730,8 +730,9 @@ switch's separate benefit.
 **The seed-42 r=0.25 arm is excluded from the aggregate, not declared invalid.**
 That classifier's loss sat at 0.0001 by epoch 90, then reported 0.2617 at epoch
 100, and `train_classifier.py` in that sweep scored the final epoch (section 10;
-the default became `--selection best_val` in v0.4.0, and `--selection final`
-still reproduces this behaviour). Under that protocol a late spike is itself a
+the default was `--selection best_val` from v0.4.0 through v0.5.2, and v0.6.0
+restores `--selection final` as the default). Under that protocol a late spike
+is itself a
 behaviour of the protocol, and the exclusion was applied after seeing the
 results - the n=2 aggregate is post-hoc and exploratory, not a pre-registered
 validity criterion. The r=0.25 GroupNorm statistics therefore cover only seeds
@@ -890,7 +891,7 @@ python src/train_joint.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
   --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
   --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
-  --patience 70 --lr_patience 70 \
+  --patience 70 --lr_patience 70 --fid_backend legacy \
   --d_norm group --weighted_sampler \
   --fid_every 5 --sample_every 10 --out_dir runs/paper2_gn_wrs
 
@@ -899,7 +900,7 @@ python src/train_joint.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --val_per_class 200 \
   --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
   --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
-  --patience 70 --lr_patience 70 \
+  --patience 70 --lr_patience 70 --fid_backend legacy \
   --fid_every 5 --sample_every 10 --out_dir runs/probe_eq_g0.1
 ```
 
@@ -917,10 +918,13 @@ python src/generate.py --ckpt runs/paper2_gn_wrs/joint.pt --seed 42 \
 # Its 5-ratio sweep. --ratios, --epochs 100, --img_size 224, --test_frac 0.2 and
 # --seed 42 are all defaults and are left implicit; --channels 3 is written out
 # because it was not the default when this section was measured (it has been
-# since v0.4.0).
+# since v0.4.0). --selection final is explicit because it was not the default
+# in v0.4.0-v0.5.2; v0.6.0 restores it as the default. The generator commands
+# above pass --fid_backend legacy because their history FID columns are on that
+# scale, not the current pytorch_fid default.
 python src/train_classifier.py --data_root data/lohi --gen_root generated_paper2 \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
-  --channels 3 --out_dir runs/sweep_paper2_s42
+  --channels 3 --selection final --out_dir runs/sweep_paper2_s42
 ```
 
 Seeds 43 and 44 repeat all three steps, because the pool's seed is inherited from
@@ -934,7 +938,7 @@ for S in 43 44; do
     --epochs 70 --batch_size 8 --img_size 224 --channels 3 --latent_dim 128 \
     --lr 1e-3 --lr_d 1e-3 --kl_weight 0.059 --perc_weight 0.1 --adv_weight 0.1 \
     --patience 70 --lr_patience 70 --seed "$S" \
-    --d_norm group --weighted_sampler \
+    --d_norm group --weighted_sampler --fid_backend legacy \
     --fid_every 5 --sample_every 10 --out_dir "runs/paper2_gn_wrs_s$S"
 
   python src/generate.py --ckpt "runs/paper2_gn_wrs_s$S/joint.pt" --seed "$S" \
@@ -944,7 +948,7 @@ for S in 43 44; do
   python src/train_classifier.py --data_root data/lohi \
     --gen_root "generated_paper2_s$S" \
     --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
-    --channels 3 --seed "$S" --out_dir "runs/sweep_paper2_s$S"
+    --channels 3 --seed "$S" --selection final --out_dir "runs/sweep_paper2_s$S"
 done
 ```
 
@@ -966,7 +970,7 @@ python src/generate.py --ckpt runs/probe_eq_g0.1/joint.pt --seed 42 \
 # crash on this machine; the numbers in section 9 come from this run directory.
 python src/train_classifier.py --data_root data/lohi --gen_root generated_ctrl \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
-  --channels 3 --num_workers 0 --out_dir runs/sweep_ctrl_s42_clean
+  --channels 3 --num_workers 0 --selection final --out_dir runs/sweep_ctrl_s42_clean
 ```
 
 `results/filling_rate_multiseed.png` is drawn from the `sweep_metrics.csv` files of
@@ -1016,13 +1020,13 @@ python src/make_class_figures.py --real_root data/lohi \
 
 ## 10. The downstream classifier is not bit-reproducible, and it scores the final epoch
 
-> **Partly superseded by v0.4.0.** The second property no longer describes the
-> default: `train_classifier.py` now checkpoints and restores the
-> best-validation epoch (`--selection best_val`), so a late loss spike no
-> longer defines the reported numbers. `--selection final` keeps this
-> section's behaviour and reproduces the published tables, which were scored
-> that way. The bit-reproducibility analysis (Cause 1) is unaffected. Kept as
-> the record of how the published numbers were produced.
+> **Partly superseded.** From v0.4.0 through v0.5.2 the default was to
+> checkpoint and restore the best-validation epoch (`--selection best_val`), so
+> a late loss spike no longer defined the reported numbers. v0.6.0 restores
+> `--selection final` as the default because it is the protocol behind every
+> published table; `--selection best_val` remains available as an alternative.
+> The bit-reproducibility analysis (Cause 1) is unaffected. Kept as the record
+> of how the published numbers were produced.
 
 Two properties of `train_classifier.py` bound how every filling-rate number in
 this repo - published or new - may be read. Both surfaced when the `r=0` control
@@ -1079,9 +1083,9 @@ When the published tables were produced, `train_one` ran a constant Adam
 learning rate for the full `--epochs` with no schedule, no early stopping and no
 checkpointing, and `evaluate` was then called on whatever weights remained;
 there was no best-epoch selection anywhere in the file. `--selection final`
-still reproduces exactly that. Since v0.4.0 the default is `--selection
-best_val`, which keeps and restores the lowest-loss epoch measured on the
-real-only leftover pool.
+reproduces exactly that and is the default again since v0.6.0. From v0.4.0
+through v0.5.2 the default was `--selection best_val`, which keeps and restores
+the lowest-loss epoch measured on the real-only leftover pool.
 
 This matters because the loss can spike late. In the section 9 sweep the `r=0.25`
 arm sat at 0.0001 by epoch 90 and then reported **0.2617 at epoch 100** - three
@@ -1107,7 +1111,8 @@ change is needed to see it.
 ```bash
 python src/train_classifier.py --data_root data/lohi --gen_root generated \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
-  --ratios "0.0" --channels 3 --epochs 100 --seed 42 --out_dir runs/noise_a
+  --ratios "0.0" --channels 3 --epochs 100 --seed 42 --selection final \
+  --out_dir runs/noise_a
 ```
 
 ## 11. Post-v0.5.1 additional measurements
@@ -1125,7 +1130,7 @@ here, each by a run that did not previously exist:
 | D2 | GroupNorm **without** the weighted sampler, separating the two switches section 9 changed together | `runs/paper2_gn_only`, `runs/sweep_gn_only` |
 | D3 | the matched BatchNorm control at seeds 43 and 44, so it has a three-seed mean like the GroupNorm arm | `runs/probe_eq_g0.1_s43`, `_s44`, `runs/sweep_ctrl_s43`, `_s44` |
 | D4 | the recommended arm under `--split_by source`, three seeds: how much of the downstream result survives when no test crop shares a source frame with training | `runs/paper2_src_s42`, `_s43`, `_s44`, `runs/sweep_src_s4x` |
-| D1 | the five published sweeps rescored under `--selection best_val`, the current default, from their own pools | `runs/sweep_*_bestval` |
+| D1 | the five published sweeps rescored under `--selection best_val`, the default from v0.4.0 through v0.5.2, from their own pools | `runs/sweep_*_bestval` |
 
 Every metric export is under `results/metrics/<run>/` (`SHA256SUMS` covers
 them), so each table below recomputes from the committed CSVs without a GPU.
@@ -1457,7 +1462,7 @@ be read as evidence that the method helps on new welds.
 ### 11.6 The published sweeps rescored under `--selection best_val` (D1)
 
 Section 10 asked what happens when the five published sweeps are scored under
-the current default, `--selection best_val`, instead of the final-epoch
+the default from v0.4.0 through v0.5.2, `--selection best_val`, instead of the final-epoch
 protocol behind every published table. The five were rerun from their own
 pools with only that flag changed (`runs/sweep_paper2_s42_bestval`, `_s43_`,
 `_s44_`, `runs/sweep_ctrl_s42_bestval`, `runs/sweep_v020_bestval`; the last
@@ -1519,13 +1524,13 @@ does not carry over.
    is a clean estimate; a selection pool disjoint from the generator's
    validation set, or a fixed schedule with more seeds, would be, and neither
    was run.
-3. *The current default should be read as a change of protocol, not a fix.*
+3. *`best_val` should be read as a change of protocol, not a fix.*
    v0.4.0 made `best_val` the default on the argument that a late spike should
    not define a reported number. That argument stands, but this rescoring
-   shows the default also moves every absolute number down and every gain
-   toward zero. Tables produced with the default are not comparable to the
-   published ones, and `--selection final` remains the flag that reproduces
-   them.
+   shows the protocol also moves every absolute number down and every gain
+   toward zero. v0.6.0 restores `--selection final` as the default;
+   `--selection best_val` remains available and is not comparable to the
+   published tables.
 
 ### 11.7 The fixed-seed noise floor, remeasured: 0.08-0.13 macro-F1, not 0.009
 

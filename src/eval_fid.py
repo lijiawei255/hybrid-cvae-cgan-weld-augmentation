@@ -34,6 +34,7 @@ Two details that are easy to get wrong on the legacy path:
 * InceptionV3 with ``transform_input=False`` expects input in **[-1, 1]**.
 * InceptionV3 is RGB-only.
 """
+
 import argparse
 import random
 import re
@@ -47,7 +48,7 @@ from scipy.linalg import LinAlgWarning, sqrtm
 from torch.utils.data import DataLoader
 from torchvision.models import Inception_V3_Weights, inception_v3
 
-from augment import CLASS_MANIFEST
+from augment import CLASS_MANIFEST, verify_generation_meta
 from data import ListDataset, assert_channels_match_data, build_loader
 
 FID_BACKENDS = ("pytorch_fid", "legacy")
@@ -57,8 +58,7 @@ DEFAULT_FID_BACKEND = "pytorch_fid"
 def parse_fid_backend(name):
     """Accept only the two documented backends; unknown names raise."""
     if name not in FID_BACKENDS:
-        raise ValueError(
-            f"fid backend must be one of {FID_BACKENDS}, got {name!r}")
+        raise ValueError(f"fid backend must be one of {FID_BACKENDS}, got {name!r}")
     return name
 
 
@@ -95,12 +95,14 @@ class FeatureExtractor:
         self.backend = parse_fid_backend(backend)
         self.device = device
         if self.backend == "legacy":
-            model = inception_v3(weights=Inception_V3_Weights.DEFAULT,
-                                 transform_input=False).to(device)
+            model = inception_v3(
+                weights=Inception_V3_Weights.DEFAULT, transform_input=False
+            ).to(device)
             model.fc = torch.nn.Identity()
             self.model = model.eval()
             return
         from pytorch_fid.inception import InceptionV3
+
         block = InceptionV3.BLOCK_INDEX_BY_DIM[2048]
         self.model = InceptionV3([block]).to(device).eval()
 
@@ -122,6 +124,11 @@ class FeatureExtractor:
 
 
 def _stats(feats):
+    if feats.shape[0] < 2:
+        raise ValueError(
+            f"FID needs at least 2 images per side, got {feats.shape[0]}; the "
+            f"feature covariance is otherwise undefined"
+        )
     return feats.mean(axis=0), np.cov(feats, rowvar=False)
 
 
@@ -150,7 +157,8 @@ def fid_from_stats(mu1, s1, mu2, s2, eps=1e-6):
     if not np.isfinite(covmean).all():
         raise np.linalg.LinAlgError(
             "FID covariance square root is not finite even after regularisation; "
-            "the feature statistics are degenerate (too few or too similar images)")
+            "the feature statistics are degenerate (too few or too similar images)"
+        )
     if np.iscomplexobj(covmean):
         covmean = covmean.real
     value = float(diff.dot(diff) + np.trace(s1 + s2 - 2 * covmean))
@@ -163,6 +171,7 @@ def frechet_distance(mu1, s1, mu2, s2, backend=DEFAULT_FID_BACKEND):
     if backend == "legacy":
         return fid_from_stats(mu1, s1, mu2, s2)
     from pytorch_fid.fid_score import calculate_frechet_distance
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", LinAlgWarning)
         return float(calculate_frechet_distance(mu1, s1, mu2, s2))
@@ -187,7 +196,8 @@ def balanced_subset(ds, per_class, class_names, seed):
         if len(by_class[name]) < per_class:
             raise ValueError(
                 f"class '{name}' holds {len(by_class[name])} images, fewer than "
-                f"the {per_class} needed for a class-balanced FID comparison")
+                f"the {per_class} needed for a class-balanced FID comparison"
+            )
         selected.extend(rng.sample(by_class[name], per_class))
     return selected
 
@@ -216,9 +226,13 @@ def remap_generated_classes(ds, root, real_classes):
             f"{manifest} is missing, so the positional class_i folders in {root} "
             f"cannot be mapped to class names. Regenerate the pool with "
             f"src/generate.py, or point --fake_root at a tree with real class "
-            f"names.")
-    names = [line.strip() for line in
-             manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+            f"names."
+        )
+    names = [
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     mapping = {}
     for folder in positional:
         i = int(folder.split("_", 1)[1])
@@ -226,20 +240,24 @@ def remap_generated_classes(ds, root, real_classes):
             raise SystemExit(
                 f"folder {folder} in {root} exceeds the {len(names)} entries "
                 f"recorded in {CLASS_MANIFEST}; the pool and its manifest "
-                f"disagree. Regenerate the pool with src/generate.py.")
+                f"disagree. Regenerate the pool with src/generate.py."
+            )
         mapping[folder] = names[i]
     unknown = sorted(set(mapping.values()) - set(real_classes))
     if unknown:
         raise SystemExit(
             f"{root} was generated for classes {names} but the real tree has "
             f"{sorted(real_classes)}; unknown class(es) {unknown}. Regenerate "
-            f"the pool against this dataset or fix --real_root.")
+            f"the pool against this dataset or fix --real_root."
+        )
     name_of = {i: mapping.get(c, c) for i, c in enumerate(ds.classes)}
     ds.classes = sorted(set(name_of.values()))
     index = {name: i for i, name in enumerate(ds.classes)}
     ds.samples = [(path, index[name_of[label]]) for path, label in ds.samples]
-    print(f"note: mapped positional class folders in {root} to real class names "
-          f"via {CLASS_MANIFEST} ({', '.join(mapping[c] for c in positional)})")
+    print(
+        f"note: mapped positional class folders in {root} to real class names "
+        f"via {CLASS_MANIFEST} ({', '.join(mapping[c] for c in positional)})"
+    )
 
 
 def main():
@@ -247,23 +265,43 @@ def main():
     ap.add_argument("--real_root", required=True, help="Real images (class subfolders)")
     ap.add_argument("--fake_root", required=True, help="Generated images (same layout)")
     ap.add_argument("--img_size", type=int, default=224)
-    ap.add_argument("--channels", type=int, default=3)
-    ap.add_argument("--fft_denoise", action="store_true",
-                    help="must match how the generator was trained, or FID measures a "
-                         "preprocessing mismatch instead of generation quality")
+    ap.add_argument("--channels", type=int, default=3, choices=(1, 3))
+    ap.add_argument(
+        "--fft_denoise",
+        action="store_true",
+        help="must match how the generator was trained, or FID measures a "
+        "preprocessing mismatch instead of generation quality",
+    )
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
-    ap.add_argument("--no_balance", action="store_true",
-                    help="compare both trees as-is with their natural class mixes; by "
-                         "default both sides are sampled class-balanced over the "
-                         "classes present in both trees, so FID measures generation "
-                         "quality rather than the class-ratio difference")
-    ap.add_argument("--balanced_per_class", type=int, default=0,
-                    help="images per class on BOTH sides for the balanced comparison "
-                         "(default: the smallest count over the shared classes)")
-    ap.add_argument("--fid_backend", choices=FID_BACKENDS, default=DEFAULT_FID_BACKEND,
-                    help="pytorch_fid (default): mseitzer/pytorch-fid with official "
-                         "TensorFlow Inception weights. legacy: the torchvision path "
-                         "used by published in-repo numbers. The two scales differ.")
+    ap.add_argument(
+        "--strict_meta",
+        action="store_true",
+        help="treat a generated pool's meta.json that predates split_by/"
+        "fft_denoise/fft_cutoff as an error instead of a warning",
+    )
+    ap.add_argument(
+        "--no_balance",
+        action="store_true",
+        help="compare both trees as-is with their natural class mixes; by "
+        "default both sides are sampled class-balanced over the "
+        "classes present in both trees, so FID measures generation "
+        "quality rather than the class-ratio difference",
+    )
+    ap.add_argument(
+        "--balanced_per_class",
+        type=int,
+        default=0,
+        help="images per class on BOTH sides for the balanced comparison "
+        "(default: the smallest count over the shared classes)",
+    )
+    ap.add_argument(
+        "--fid_backend",
+        choices=FID_BACKENDS,
+        default=DEFAULT_FID_BACKEND,
+        help="pytorch_fid (default): mseitzer/pytorch-fid with official "
+        "TensorFlow Inception weights. legacy: the torchvision path "
+        "used by published in-repo numbers. The two scales differ.",
+    )
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
@@ -273,17 +311,51 @@ def main():
             raise SystemExit(f"not a directory: {root}")
     if args.balanced_per_class < 0:
         raise SystemExit(
-            f"--balanced_per_class must be >= 0, got {args.balanced_per_class}")
+            f"--balanced_per_class must be >= 0, got {args.balanced_per_class}"
+        )
+    if args.img_size < 1:
+        raise SystemExit(f"--img_size must be >= 1, got {args.img_size}")
+    if args.batch_size < 1:
+        raise SystemExit(f"--batch_size must be >= 1, got {args.batch_size}")
+    if args.num_workers < 0:
+        raise SystemExit(f"--num_workers must be >= 0, got {args.num_workers}")
+    if not 0.0 < args.fft_cutoff <= 1.0:
+        raise SystemExit(f"--fft_cutoff must be in (0, 1], got {args.fft_cutoff}")
+
+    # Check the generated pool's recorded representation when its meta.json is
+    # present. Pools from before those fields existed produce a warning rather
+    # than a failure (verify_generation_meta is backward-compatible by default).
+    if (Path(args.fake_root) / "meta.json").is_file():
+        verify_generation_meta(
+            args.fake_root,
+            img_size=args.img_size,
+            channels=args.channels,
+            fft_denoise=args.fft_denoise,
+            fft_cutoff=args.fft_cutoff if args.fft_denoise else None,
+            strict_meta=args.strict_meta,
+        )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     assert_channels_match_data(args.real_root, args.channels)
     assert_channels_match_data(args.fake_root, args.channels)
-    load_kw = dict(num_workers=args.num_workers, channels=args.channels,
-                   fft_denoise=args.fft_denoise, fft_cutoff=args.fft_cutoff,
-                   shuffle=False, drop_last=False)
-    ds_real, real_loader = build_loader(args.real_root, args.img_size, args.batch_size,
-                                        **load_kw)
-    ds_fake, fake_loader = build_loader(args.fake_root, args.img_size, args.batch_size, **load_kw)
+    load_kw = dict(
+        num_workers=args.num_workers,
+        channels=args.channels,
+        fft_denoise=args.fft_denoise,
+        fft_cutoff=args.fft_cutoff,
+        shuffle=False,
+        drop_last=False,
+    )
+    ds_real, real_loader = build_loader(
+        args.real_root, args.img_size, args.batch_size, **load_kw
+    )
+    ds_fake, fake_loader = build_loader(
+        args.fake_root,
+        args.img_size,
+        args.batch_size,
+        allow_empty_classes=True,
+        **load_kw,
+    )
     for root, ds in ((args.real_root, ds_real), (args.fake_root, ds_fake)):
         if not ds.samples:
             # Otherwise an empty tree dies later inside np.concatenate with a
@@ -291,6 +363,7 @@ def main():
             raise SystemExit(f"no images found under {root}")
     remap_generated_classes(ds_fake, args.fake_root, ds_real.classes)
     if not args.no_balance:
+
         def counts_by_name(ds):
             counts = {}
             for _, label in ds.samples:
@@ -301,28 +374,48 @@ def main():
         real_counts, fake_counts = counts_by_name(ds_real), counts_by_name(ds_fake)
         shared = sorted(set(real_counts) & set(fake_counts))
         for name in sorted(set(real_counts) ^ set(fake_counts)):
-            print(f"note: class '{name}' is missing on one side "
-                  f"(real {real_counts.get(name, 0)}, fake {fake_counts.get(name, 0)} "
-                  f"images) - excluded from the balanced comparison")
+            print(
+                f"note: class '{name}' is missing on one side "
+                f"(real {real_counts.get(name, 0)}, fake {fake_counts.get(name, 0)} "
+                f"images) - excluded from the balanced comparison"
+            )
         if not shared:
             raise SystemExit("no class is present in both trees; nothing to compare")
-        n_per = args.balanced_per_class or min(min(real_counts[n], fake_counts[n])
-                                               for n in shared)
+        n_per = args.balanced_per_class or min(
+            min(real_counts[n], fake_counts[n]) for n in shared
+        )
         real_loader = DataLoader(
-            ListDataset(balanced_subset(ds_real, n_per, shared, seed=0),
-                        ds_real.tf, ds_real.channels),
-            batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+            ListDataset(
+                balanced_subset(ds_real, n_per, shared, seed=0),
+                ds_real.tf,
+                ds_real.channels,
+            ),
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+        )
         fake_loader = DataLoader(
-            ListDataset(balanced_subset(ds_fake, n_per, shared, seed=0),
-                        ds_fake.tf, ds_fake.channels),
-            batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-        print(f"FID comparison: {n_per} per class x {len(shared)} shared classes on "
-              f"both sides (class-balanced; pass --no_balance to compare both trees "
-              f"as-is)")
+            ListDataset(
+                balanced_subset(ds_fake, n_per, shared, seed=0),
+                ds_fake.tf,
+                ds_fake.channels,
+            ),
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+        )
+        print(
+            f"FID comparison: {n_per} per class x {len(shared)} shared classes on "
+            f"both sides (class-balanced; pass --no_balance to compare both trees "
+            f"as-is)"
+        )
     extractor = FeatureExtractor(args.fid_backend, device)
     mu_r, s_r = _stats(extractor.features(real_loader))
     mu_f, s_f = _stats(extractor.features(fake_loader))
-    print(f"FID ({args.fid_backend}) =", frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend))
+    print(
+        f"FID ({args.fid_backend}) =",
+        frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend),
+    )
 
 
 if __name__ == "__main__":

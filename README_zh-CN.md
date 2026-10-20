@@ -39,8 +39,8 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 | **方法** | 单个联合训练的 hybrid CVAE-CGAN：同一解码器同时是 `D(z, y)` 与 `G(z, y)`；MSE + KL + VGG19 感知 + hinge 对抗（spectral norm） |
 | **数据** | 公开 LoHi-WELD 焊缝裁剪（论文使用专有 WAAM 熔池图像；结果不可比较） |
 | **入口脚本** | `smoke_test.py` -> `train_joint.py` -> `generate.py` -> `train_classifier.py`（+ `eval_fid.py`），均在 `src/` |
-| **主要结果** | balance-to-max（r=1.0）三 seed macro-F1 0.7185 ± 0.0019，较纯真实均值 +0.0399，**仅在裁剪级划分下成立**；按源图分组划分后增益不复存在（−0.0187，pore F1 −0.1041，三 seed；见[结果](#结果---lohi-weld当前)） |
-| **状态** | 已完成 / 按现状提供；冻结参考实现，v0.5.2（[CHANGELOG](CHANGELOG.md)） |
+| **主要结果** | 在裁剪级划分下，balance-to-max（r=1.0）三 seed macro-F1 为 0.7185 ± 0.0019，较纯真实均值 +0.0399；**按源图分组划分后增益不复存在**（macro-F1 −0.0187，pore F1 −0.1041，三 seed）。裁剪级表格只代表该协议；见[结果](#结果---lohi-weld当前) |
+| **状态** | 已完成 / 按现状提供；冻结参考实现。v0.5.2 是 Zenodo 存档快照，`main` 包含尚未发布的 v0.6.0-dev 维护改动（[CHANGELOG](CHANGELOG.md)） |
 
 ## 目录
 
@@ -55,7 +55,7 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 
 ## 本仓库是什么、不是什么
 
-本仓库是对 Yang 等人所述 hybrid CVAE-CGAN 训练与增广协议的**从零复现**。贡献在于别人不必再重写训练循环，也不必重新踩标定坑。与论文的每一处偏离都记录在 [`docs/CALIBRATION.md`](docs/CALIBRATION.md)。
+本仓库是对 Yang 等人所述 hybrid CVAE-CGAN 训练与增广协议的**从零复现**。贡献在于别人不必再重写训练循环，也不必重新踩标定坑。凡影响已发表运行的标定偏离都记录在 [`docs/CALIBRATION.md`](docs/CALIBRATION.md)；未测量的 `--g_norm` 开关在下方范围表中明确标出。
 
 它**不是**原作者的代码、通用图像生成库、持续运营的社区脚手架，或即插即用的工业工具。绝对数字与此处使用的公开替代数据（LoHi-WELD）以及从零训练的 ResNet-18 分类器绑定，不可与论文的专有结果比较。
 
@@ -67,7 +67,7 @@ L_G = MSE_recon  +  beta * KL  +  lambda * VGG19_perceptual  +  gamma * adversar
 
 **本仓库适配。** PyTorch 而非 TensorFlow/Keras。KL 权重按本仓库均值归一化的 [0, 1] 损失换算（latent 32 时 `0.015`，latent 128 时 `0.059`，对应论文 `beta = 30`）。对抗项是 hinge + spectral normalisation（期刊扩展），不是会议论文的 BCE。编码器卷积体是 4x4 stride-2 DCGAN 块，不是论文的 3x3 残差。下游分类器是单帧上从零训练的 ResNet-18。默认 FID 使用 [pytorch-fid](https://github.com/mseitzer/pytorch-fid)（官方 TensorFlow Inception 权重）。本仓库已发表的 FID 数字用的是旧的 torchvision 路径（`--fid_backend legacy`）。
 
-**数据不等价。** 论文训练于专有可见光熔池图像（1,898 张、9 类）。本仓库使用公开 LoHi-WELD 焊缝裁剪，外加模拟的小而失衡 `--subset`。模态匹配；缺陷语义、相机几何与尺度不匹配。论文报告的数字因数据专有而无法被外部验证；本仓库的每一个数字都可基于公开数据端到端复现。
+**数据不等价。** 论文训练于专有可见光熔池图像（1,898 张、9 类）。本仓库使用公开 LoHi-WELD 焊缝裁剪，外加模拟的小而失衡 `--subset`。模态匹配；缺陷语义、相机几何与尺度不匹配。论文报告的数字因数据专有而无法被外部验证；本仓库的每一个数字都可基于公开数据端到端重跑，但 GPU 结果并非逐位可复现。
 
 **不可与论文直接比较。** 准确率、F1、FID 绝对值、DR/MDR。LoHi-WELD 没有非缺陷类，因此 DR/MDR 在此不可定义。
 
@@ -109,13 +109,14 @@ python src/train_joint.py --data_root data/lohi \
   --fid_every 5 --sample_every 10 \
   --out_dir runs/joint_lohi_recommended
 
-# 生成 balance-to-max 池
+# 生成 balance-to-max 池。若生成器训练 seed 不是 42，--seed 必须与之一致：
+# generate.py 会把实际采样 seed 写入 meta.json，train_classifier.py 会拒绝不一致的池。
 python src/generate.py --ckpt runs/joint_lohi_recommended/joint.pt \
   --counts "pore=560,deposit=450,discontinuity=300,stain=0" --out_root generated
 
 # 下游扫描：每个 filling rate 一个从零训练的分类器
-# 下面每一张已发表的表格都用 --selection final 打分；当前默认值 best_val
-# 选的是另一个 epoch。
+# 下面每一张已发表的表格都用 --selection final 打分；自 v0.6.0 起它也是默认值，
+# --selection best_val 选的是另一个 epoch。
 python src/train_classifier.py --data_root data/lohi --gen_root generated \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
   --ratios "0.0,0.25,0.5,0.75,1.0" --channels 3 --epochs 100 \
@@ -130,7 +131,8 @@ python src/make_paper_figures.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
   --out_dir results
 
-# 独立 FID（默认后端：pytorch-fid）
+# 独立 FID（默认后端：pytorch-fid）。上面的 balance-to-max 池没有 stain 图
+# （stain 是多数类），因此这里只比较两侧都存在的三个类，而不是全部四个类。
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 # 本仓库已发表的 FID 数字用的是：
 #   python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3 --fid_backend legacy
@@ -169,7 +171,7 @@ python src/prepare_yolo_crops.py \
 | 0.75 | 0.8141 | 0.7029 | 0.8064 | 0.5957 | 0.8977 | **0.4902** | 0.8281 |
 | 1.00（balance-to-max） | 0.7392 | 0.6418 | 0.7403 | 0.6199 | 0.7932 | 0.3871 | 0.7669 |
 
-本节两张表都以 `--selection final` 打分、FID 以 `--fid_backend legacy` 计算；今天的默认值是 `best_val` 与 `pytorch_fid`，是不同的协议和不同的尺度。**在同一 seed 下重跑同一纯真实配置，macro-F1 最多变动 0.127、pore F1 最多变动 0.255**（三个 seed 上共八次重复，实测见 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 11.7 节；第 10 节报告的那一次重复 0.009 / 0.034 只是运气好），所以本表中任何单个逐比例差异，除非在多个 seed 上重复出现，都应读作噪声——包括表中的每一个差异。
+本表以 `--selection final` 打分、FID 以 `--fid_backend legacy` 计算；自 v0.6.0 起分类器默认值恢复为 `final`，而 FID 默认仍是 `pytorch_fid`，属于不同尺度。**在同一 seed 下重跑同一纯真实配置，macro-F1 最多变动 0.127、pore F1 最多变动 0.255**（三个 seed 上共八次重复，实测见 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 11.7 节；第 10 节报告的那一次重复 0.009 / 0.034 只是运气好），所以本表中任何单个逐比例差异，除非在多个 seed 上重复出现，都应读作噪声——包括表中的每一个差异。
 
 两个按实测报告的发现：
 
@@ -201,7 +203,7 @@ python src/prepare_yolo_crops.py \
 > [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 11 节。图：
 > `results/filling_rate_multiseed_v052.png`。
 
-`results/` 中的图。**每张图都属于某一次特定运行**，而且只有第一行能仅凭本仓库已提交的内容重画；其余需要生成器 checkpoint 或原始运行目录里的逐比例混淆矩阵，而那些目录被 gitignore（见[可复现性](#可复现性)）：
+`results/` 中的图。**每张图都属于某一次特定运行。** 前五行可仅凭本仓库已提交的 `results/metrics/` 重画；最后两行需要生成器 checkpoint 和原始运行目录里的逐比例混淆矩阵，而那些目录被 gitignore（见[可复现性](#可复现性)）：
 
 | 图 | 由哪次运行产出 | 能否在此重画 |
 |---|---|---|
@@ -247,7 +249,7 @@ v0.5.2 的图加入了同一臂在源图分组划分下的曲线（红）和三 
 | pore | stain |
 | ![pore 特写](results/class_pore.png) | ![stain 特写](results/class_stain.png) |
 
-已发表表格使用 `--selection final`。当前分类器默认是 `--selection best_val`。下游模型是单帧上从零训练的 ResNet-18，而非论文的 LSTM/GRU。完整注意事项见 [`docs/USAGE.md`](docs/USAGE.md#limitations) 与 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 10 节。
+已发表表格使用 `--selection final`；自 v0.6.0 起它也是分类器默认值，`--selection best_val` 是需显式选择的另一种协议。下游模型是单帧上从零训练的 ResNet-18，而非论文的 LSTM/GRU。完整注意事项见 [`docs/USAGE.md`](docs/USAGE.md#limitations) 与 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) 第 10 节。
 
 ## 许可证
 

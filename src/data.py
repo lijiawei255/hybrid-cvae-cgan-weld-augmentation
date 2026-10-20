@@ -11,6 +11,7 @@ every other module - keep them consistent if you change them:
 * Class subsets are requested **by class name**, never by index. Hardcoding
   indices silently samples the wrong classes on any other dataset.
 """
+
 import random
 import re
 from collections import Counter
@@ -46,6 +47,8 @@ def assert_channels_match_data(data_root, channels):
     colour crops to one channel hides defect signal and is almost always a
     leftover default rather than an intentional choice.
     """
+    if channels not in (1, 3):
+        raise ValueError(f"channels must be 1 or 3, got {channels}")
     if channels != 1:
         return
     mode = peek_image_mode(data_root)
@@ -53,8 +56,8 @@ def assert_channels_match_data(data_root, channels):
         raise ValueError(
             f"{data_root} looks like {mode} imagery; --channels 1 would silently "
             f"convert it to grayscale. Pass --channels 3, or convert the files "
-            f"offline if grayscale really is intended.")
-
+            f"offline if grayscale really is intended."
+        )
 
 
 def fft_lowpass(arr, cutoff=0.25):
@@ -85,7 +88,9 @@ class FFTLowPass:
         arr = np.asarray(img)
         if arr.ndim == 3:
             filtered = np.stack(
-                [fft_lowpass(arr[:, :, c], self.cutoff) for c in range(arr.shape[2])], axis=-1)
+                [fft_lowpass(arr[:, :, c], self.cutoff) for c in range(arr.shape[2])],
+                axis=-1,
+            )
         else:
             filtered = fft_lowpass(arr, self.cutoff)
         return Image.fromarray(filtered)
@@ -102,16 +107,34 @@ class ClassFolderDataset(Dataset):
     Labels are the indices of the sorted subdirectory names, and `self.classes`
     is that sorted name list - the single source of truth for the name <-> label
     mapping used everywhere else.
+
+    ``allow_empty_classes`` exists for ``generate.py`` trees: a positional
+    ``class_i`` folder can legitimately hold zero images when balance-to-max
+    asks for none of that class. Real datasets keep the default and reject an
+    empty class folder by name.
     """
 
-    def __init__(self, data_root, img_size=224, channels=1, fft_denoise=False, fft_cutoff=0.25):
+    def __init__(
+        self,
+        data_root,
+        img_size=224,
+        channels=1,
+        fft_denoise=False,
+        fft_cutoff=0.25,
+        allow_empty_classes=False,
+    ):
+        if channels not in (1, 3):
+            raise ValueError(f"channels must be 1 or 3, got {channels}")
         self.root = Path(data_root)
         self.channels = channels
         # Hidden dirs are skipped: a .ipynb_checkpoints or editor leftover must
         # not become a phantom class that shifts every label index (prepare_yolo_
         # crops.py applies the same rule to its input tree).
-        self.classes = sorted(p.name for p in self.root.iterdir()
-                              if p.is_dir() and not p.name.startswith("."))
+        self.classes = sorted(
+            p.name
+            for p in self.root.iterdir()
+            if p.is_dir() and not p.name.startswith(".")
+        )
         self.samples = []
         for idx, cname in enumerate(self.classes):
             # Sort by name, not by Path object: Path comparison is
@@ -119,9 +142,25 @@ class ClassFolderDataset(Dataset):
             # tree with any uppercase filename would otherwise be ordered
             # differently on the two platforms - and this order is what the
             # seeded split indexes into.
-            for fp in sorted((self.root / cname).glob("*"), key=lambda q: q.name):
-                if fp.suffix.lower() in IMG_EXTENSIONS:
-                    self.samples.append((fp, idx))
+            files = sorted((self.root / cname).glob("*"), key=lambda q: q.name)
+            files = [fp for fp in files if fp.suffix.lower() in IMG_EXTENSIONS]
+            if not files:
+                if allow_empty_classes:
+                    # Generated pools legitimately have a class_i folder with no
+                    # images when the balance-to-max count for that class is 0;
+                    # keep the positional class so classes.txt still maps.
+                    continue
+                # An empty real class folder would otherwise become a phantom
+                # class with zero samples: num_classes would include it and
+                # every downstream per-class draw would fail later with a
+                # message that never names this folder.
+                raise ValueError(
+                    f"class folder '{cname}' under {self.root} contains no "
+                    f"images with extensions {IMG_EXTENSIONS}; remove it or add "
+                    f"images, otherwise label indices and --subset classes shift"
+                )
+            for fp in files:
+                self.samples.append((fp, idx))
 
         steps = [transforms.Resize((img_size, img_size))]
         if fft_denoise:
@@ -167,7 +206,9 @@ class ListDataset(Dataset):
 
 #: prepare_yolo_crops.py names each crop "<encoded-source-path>_<k:03d>.png", so
 #: stripping that trailing box index recovers the source frame it was cut from.
-_CROP_INDEX_SUFFIX = re.compile(r"_\d{3}$")
+#: The {3,} matters: a frame with more than 999 boxes writes a four-digit index,
+#: and a fixed three-digit pattern would leave a leading digit on the source key.
+_CROP_INDEX_SUFFIX = re.compile(r"_\d{3,}$")
 
 
 def source_key(path):
@@ -241,8 +282,9 @@ def make_splits(samples, test_frac=0.2, seed=42, split_by="crop"):
     # fill a class still short of its target than overshoot one already met.
     for key in keys:
         counts = counts_of[key]
-        useful = sum(min(n, max(0, target[label] - taken[label]))
-                     for label, n in counts.items())
+        useful = sum(
+            min(n, max(0, target[label] - taken[label])) for label, n in counts.items()
+        )
         if useful * 2 >= len(groups[key]):
             in_test.add(key)
             for label, n in counts.items():
@@ -275,6 +317,11 @@ def make_splits(samples, test_frac=0.2, seed=42, split_by="crop"):
     for label in sorted(by_label):
         if total[label] < 2:
             continue
+        # A class with too few crops for one test image has target 0 by the
+        # same rounding the crop-level split uses (and crop-level would also
+        # yield no test image). Do not call that an impossible frame split.
+        if target[label] < 1:
+            continue
         if taken[label] == 0 or taken[label] == total[label]:
             side = "test" if taken[label] == 0 else "training"
             frames = sorted({source_key(samples[i][0]) for i in by_label[label]})
@@ -283,7 +330,8 @@ def make_splits(samples, test_frac=0.2, seed=42, split_by="crop"):
                 f"{len(frames)} source frame(s), so a source-grouped split at "
                 f"test_frac={test_frac} leaves it with no {side} images. Its crops "
                 f"are too concentrated in single frames for split_by='source'; use "
-                f"split_by='crop', change test_frac, or add more source frames.")
+                f"split_by='crop', change test_frac, or add more source frames."
+            )
     return sorted(train_idx), sorted(test_idx)
 
 
@@ -298,7 +346,8 @@ def sample_named_subset(dataset, per_class_counts, pool_idx, seed):
     unknown = sorted(name for name in per_class_counts if name not in name_to_label)
     if unknown:
         raise KeyError(
-            f"unknown class name(s) {unknown}; dataset classes are {dataset.classes}")
+            f"unknown class name(s) {unknown}; dataset classes are {dataset.classes}"
+        )
 
     by_label = {}
     for i in pool_idx:
@@ -312,7 +361,8 @@ def sample_named_subset(dataset, per_class_counts, pool_idx, seed):
         if want > len(available):
             raise ValueError(
                 f"class '{name}': requested {want} images but only {len(available)} "
-                f"are available in the pool")
+                f"are available in the pool"
+            )
         if want:
             keep.extend(rng.sample(available, want))
     return sorted(keep)
@@ -368,19 +418,41 @@ def parse_name_counts(text):
     return out
 
 
-def build_loader(data_root, img_size=224, batch_size=8, num_workers=4, channels=1,
-                 fft_denoise=False, fft_cutoff=0.25, shuffle=True, drop_last=True,
-                 indices=None):
+def build_loader(
+    data_root,
+    img_size=224,
+    batch_size=8,
+    num_workers=4,
+    channels=1,
+    fft_denoise=False,
+    fft_cutoff=0.25,
+    shuffle=True,
+    drop_last=True,
+    indices=None,
+    allow_empty_classes=False,
+):
     """Build (dataset, loader). `indices` restricts the loader to a subset."""
-    ds = ClassFolderDataset(data_root, img_size, channels, fft_denoise, fft_cutoff)
+    ds = ClassFolderDataset(
+        data_root,
+        img_size,
+        channels,
+        fft_denoise,
+        fft_cutoff,
+        allow_empty_classes=allow_empty_classes,
+    )
     target = torch.utils.data.Subset(ds, indices) if indices is not None else ds
     # Workers must persist across epochs: the per-epoch worker teardown join
     # deadlocks on Windows (observed 2026-09-06: epoch teardown stalled for
     # 30+ minutes with spawn-based workers).
-    loader = DataLoader(target, batch_size=batch_size, shuffle=shuffle,
-                        num_workers=num_workers, drop_last=drop_last,
-                        # pin_memory only helps with a CUDA device; on CPU-only
-                        # machines recent torch warns about it on every loader.
-                        pin_memory=torch.cuda.is_available(),
-                        persistent_workers=num_workers > 0)
+    loader = DataLoader(
+        target,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        drop_last=drop_last,
+        # pin_memory only helps with a CUDA device; on CPU-only
+        # machines recent torch warns about it on every loader.
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
+    )
     return ds, loader

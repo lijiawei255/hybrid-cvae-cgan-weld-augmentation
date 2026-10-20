@@ -8,6 +8,7 @@ per-class FID computed with the same InceptionV3 features as
 src/eval_fid.py), sized to stay readable when pasted directly into a chat
 window. Output files land in --out_dir as class_<NAME>.png.
 """
+
 import argparse
 import sys
 from pathlib import Path
@@ -18,11 +19,21 @@ from torch.utils.data import DataLoader, Subset
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from augment import generated_by_class
-from data import (IMG_EXTENSIONS, ClassFolderDataset, ListDataset,
-                  assert_channels_match_data, make_splits)
-from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
-                      _stats, frechet_distance)
+from augment import generated_by_class, verify_generation_meta
+from data import (
+    IMG_EXTENSIONS,
+    ClassFolderDataset,
+    ListDataset,
+    assert_channels_match_data,
+    make_splits,
+)
+from eval_fid import (
+    DEFAULT_FID_BACKEND,
+    FID_BACKENDS,
+    FeatureExtractor,
+    _stats,
+    frechet_distance,
+)
 from make_comparison import default_font, load_images
 
 
@@ -33,16 +44,29 @@ def main():
     ap.add_argument("--out_dir", default="results")
     ap.add_argument("--per_row", type=int, default=4)
     ap.add_argument("--img_size", type=int, default=160)
-    ap.add_argument("--channels", type=int, default=3)
-    ap.add_argument("--fft_denoise", action="store_true",
-                    help="apply the same FFT low-pass the generator was trained with, "
-                         "so the per-class FID compares like with like (see eval_fid.py)")
+    ap.add_argument("--channels", type=int, default=3, choices=(1, 3))
+    ap.add_argument(
+        "--fft_denoise",
+        action="store_true",
+        help="apply the same FFT low-pass the generator was trained with, "
+        "so the per-class FID compares like with like (see eval_fid.py)",
+    )
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
+    ap.add_argument(
+        "--strict_meta",
+        action="store_true",
+        help="treat a generated pool's meta.json that predates split_by/"
+        "fft_denoise/fft_cutoff as an error instead of a warning",
+    )
     ap.add_argument("--test_frac", type=float, default=0.2)
-    ap.add_argument("--split_by", choices=("crop", "source"), default="crop",
-                    help="must match the generator's --split_by, so the FID reference "
-                         "excludes exactly the held-out test split; 'crop' is the "
-                         "published protocol. See train_joint.py --split_by.")
+    ap.add_argument(
+        "--split_by",
+        choices=("crop", "source"),
+        default="crop",
+        help="must match the generator's --split_by, so the FID reference "
+        "excludes exactly the held-out test split; 'crop' is the "
+        "published protocol. See train_joint.py --split_by.",
+    )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--num_workers", type=int, default=4)
@@ -55,14 +79,42 @@ def main():
             raise SystemExit(f"not a directory: {root}")
     if not 0.0 < args.test_frac < 1.0:
         raise SystemExit(f"--test_frac must be in (0, 1), got {args.test_frac}")
+    if args.img_size < 1:
+        raise SystemExit(f"--img_size must be >= 1, got {args.img_size}")
+    if args.per_row < 1:
+        raise SystemExit(f"--per_row must be >= 1, got {args.per_row}")
+    if args.batch_size < 2:
+        raise SystemExit(
+            f"--batch_size must be >= 2 (BatchNorm needs more than one sample), "
+            f"got {args.batch_size}"
+        )
+    if args.num_workers < 0:
+        raise SystemExit(f"--num_workers must be >= 0, got {args.num_workers}")
+    if not 0.0 < args.fft_cutoff <= 1.0:
+        raise SystemExit(f"--fft_cutoff must be in (0, 1], got {args.fft_cutoff}")
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # The pool's meta.json records the generator-side preprocessing. The display
+    # --img_size is a rendering choice, so it is not compared here.
+    if (gen_root / "meta.json").is_file():
+        verify_generation_meta(
+            gen_root,
+            seed=args.seed,
+            test_frac=args.test_frac,
+            channels=args.channels,
+            split_by=args.split_by,
+            fft_denoise=args.fft_denoise,
+            fft_cutoff=args.fft_cutoff if args.fft_denoise else None,
+            strict_meta=args.strict_meta,
+        )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     extractor = FeatureExtractor(args.fid_backend, device)
     assert_channels_match_data(real_root, args.channels)
-    ds = ClassFolderDataset(real_root, args.img_size, args.channels,
-                            args.fft_denoise, args.fft_cutoff)
+    ds = ClassFolderDataset(
+        real_root, args.img_size, args.channels, args.fft_denoise, args.fft_cutoff
+    )
     s, g = args.img_size, 8
 
     font = default_font(20)
@@ -76,27 +128,44 @@ def main():
         # FID reference excludes the held-out test split. Unlike train_joint.py,
         # which caps the reference at --val_per_class images, this uses every
         # train-pool image of the class.
-        real_idx = [j for j, (_, y) in enumerate(ds.samples)
-                    if y == i and j not in test_set]
+        real_idx = [
+            j for j, (_, y) in enumerate(ds.samples) if y == i and j not in test_set
+        ]
         gen_files = pool[cname]
         if not gen_files:
             raise SystemExit(
-                f"no generated images for class '{cname}' under {gen_root}")
+                f"no generated images for class '{cname}' under {gen_root}"
+            )
         gen_samples = [(f, i) for f in gen_files]
 
-        dl_kw = dict(batch_size=args.batch_size, num_workers=args.num_workers,
-                     pin_memory=(device == "cuda"))
-        real_loader = DataLoader(Subset(ds, real_idx), shuffle=False,
-                                 drop_last=False, **dl_kw)
-        gen_loader = DataLoader(ListDataset(gen_samples, ds.tf, ds.channels), shuffle=False,
-                                drop_last=False, **dl_kw)
+        dl_kw = dict(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=(device == "cuda"),
+        )
+        real_loader = DataLoader(
+            Subset(ds, real_idx), shuffle=False, drop_last=False, **dl_kw
+        )
+        gen_loader = DataLoader(
+            ListDataset(gen_samples, ds.tf, ds.channels),
+            shuffle=False,
+            drop_last=False,
+            **dl_kw,
+        )
         mu_r, s_r = _stats(extractor.features(real_loader))
         mu_f, s_f = _stats(extractor.features(gen_loader))
         fid = frechet_distance(mu_r, s_r, mu_f, s_f, args.fid_backend)
 
-        real_imgs = load_images([p for p in (real_root / cname).iterdir()
-                                 if p.suffix.lower() in IMG_EXTENSIONS],
-                                args.per_row, s, seed=0)
+        real_imgs = load_images(
+            [
+                p
+                for p in (real_root / cname).iterdir()
+                if p.suffix.lower() in IMG_EXTENSIONS
+            ],
+            args.per_row,
+            s,
+            seed=0,
+        )
         gen_imgs = load_images(gen_files, args.per_row, s, seed=1)
 
         label_w, header_h, stats_h = 110, 30, 30
@@ -105,27 +174,39 @@ def main():
         canvas = Image.new("RGB", (W, H), (255, 255, 255))
         draw = ImageDraw.Draw(canvas)
         draw.text((8, 5), cname, fill=(0, 0, 0), font=font)
-        draw.text((label_w, 8), "top row real, bottom row generated",
-                  fill=(90, 90, 90), font=small)
+        draw.text(
+            (label_w, 8),
+            "top row real, bottom row generated",
+            fill=(90, 90, 90),
+            font=small,
+        )
         y = header_h
         for row, label in ((real_imgs, "Real"), (gen_imgs, "Gen")):
             tag = "real" if label == "Real" else "gen"
             bbox = draw.textbbox((0, 0), tag, font=small)
-            draw.text((8, y + s // 2 - (bbox[3] - bbox[1]) // 2), tag,
-                      fill=(60, 60, 60), font=small)
+            draw.text(
+                (8, y + s // 2 - (bbox[3] - bbox[1]) // 2),
+                tag,
+                fill=(60, 60, 60),
+                font=small,
+            )
             x = label_w
             for img in row:
                 canvas.paste(img, (x, y))
                 x += s + g
             y += s + g
-        stats = (f"real {len(real_idx):,} | generated {len(gen_files):,} | "
-                 f"class FID {fid:.2f} (InceptionV3, trend-only scale)")
+        stats = (
+            f"real {len(real_idx):,} | generated {len(gen_files):,} | "
+            f"class FID {fid:.2f} (InceptionV3, trend-only scale)"
+        )
         draw.text((8, H - stats_h + 6), stats, fill=(40, 40, 40), font=small)
 
         out = out_dir / f"class_{cname}.png"
         canvas.save(out)
-        print(f"{cname}: real {len(real_idx):,}, generated {len(gen_files):,}, "
-              f"FID {fid:.2f} -> {out}")
+        print(
+            f"{cname}: real {len(real_idx):,}, generated {len(gen_files):,}, "
+            f"FID {fid:.2f} -> {out}"
+        )
 
 
 if __name__ == "__main__":

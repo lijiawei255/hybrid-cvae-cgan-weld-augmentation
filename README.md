@@ -49,8 +49,8 @@ the papers live in [`docs/CALIBRATION.md`](docs/CALIBRATION.md).
 | **Method** | Single jointly-trained hybrid CVAE-CGAN: one decoder is both `D(z, y)` and `G(z, y)`; MSE + KL + VGG19 perceptual + hinge adversarial (spectral norm) |
 | **Data** | Public LoHi-WELD weld-bead crops (the papers used proprietary WAAM melt-pool imagery; results are not comparable) |
 | **Entry points** | `smoke_test.py` -> `train_joint.py` -> `generate.py` -> `train_classifier.py` (+ `eval_fid.py`), all in `src/` |
-| **Headline result** | Balance-to-max (r=1.0) macro-F1 0.7185 ± 0.0019 across three seeds, +0.0399 over the real-only mean, **on the crop-level split**; under a source-frame-grouped split the gain does not survive (-0.0187, pore F1 -0.1041, three seeds; see [Results](#results---lohi-weld-current)) |
-| **Status** | Complete / as-is; frozen reference implementation, v0.5.2 ([CHANGELOG](CHANGELOG.md)) |
+| **Headline result** | On a crop-level split, balance-to-max (r=1.0) reaches macro-F1 0.7185 ± 0.0019 across three seeds, +0.0399 over the real-only mean; **the gain does not survive source-frame grouping** (-0.0187 macro-F1, -0.1041 pore F1, three seeds). Treat the crop-level table as protocol-specific; see [Results](#results---lohi-weld-current) |
+| **Status** | Complete / as-is; frozen reference implementation. v0.5.2 is the archived Zenodo snapshot; `main` carries unreleased v0.6.0-dev maintenance changes ([CHANGELOG](CHANGELOG.md)) |
 
 ## Contents
 
@@ -68,8 +68,9 @@ the papers live in [`docs/CALIBRATION.md`](docs/CALIBRATION.md).
 This is a **from-scratch re-implementation of the hybrid CVAE-CGAN training
 and augmentation protocol** described by Yang et al. The contribution is that
 others need not reinvent the training loop or rediscover the calibration
-pitfalls. Every deviation from the papers is measured in
-[`docs/CALIBRATION.md`](docs/CALIBRATION.md).
+pitfalls. Every calibrated deviation that affects the published runs is
+measured in [`docs/CALIBRATION.md`](docs/CALIBRATION.md); the unmeasured
+`--g_norm` switch is called out explicitly in the scope table below.
 
 It is **not** the original authors' code, a general-purpose image-generation
 library, a living community scaffold, or a drop-in industrial tool. Absolute
@@ -100,8 +101,8 @@ melt-pool images (1,898 images, 9 classes). This repo uses public LoHi-WELD
 weld-bead crops and a simulated small/imbalanced `--subset`. Modality
 matches; defect semantics, camera geometry and scale do not. The papers'
 reported numbers cannot be externally verified because their dataset is
-proprietary; every number in this repo is reproducible end-to-end from
-public data.
+proprietary; every number in this repo can be rerun end-to-end from
+public data, though GPU runs are not bit-reproducible.
 
 **Not comparable to the papers.** Accuracy, F1, FID absolute values, and
 DR/MDR. LoHi-WELD has no non-defect class, so DR/MDR are undefined here.
@@ -160,13 +161,15 @@ python src/train_joint.py --data_root data/lohi \
   --fid_every 5 --sample_every 10 \
   --out_dir runs/joint_lohi_recommended
 
-# Generate the balance-to-max pool.
+# Generate the balance-to-max pool. --seed must equal the generator's training
+# seed when it is not 42: generate.py records the sampling seed in meta.json and
+# train_classifier.py refuses a pool whose recorded seed disagrees.
 python src/generate.py --ckpt runs/joint_lohi_recommended/joint.pt \
   --counts "pore=560,deposit=450,discontinuity=300,stain=0" --out_root generated
 
 # Downstream sweep: one from-scratch classifier per filling rate.
-# --selection final is the protocol behind every published table below;
-# the current default, best_val, scores a different epoch.
+# --selection final is the protocol behind every published table below and
+# is the default since v0.6.0; --selection best_val scores a different epoch.
 python src/train_classifier.py --data_root data/lohi --gen_root generated \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" \
   --ratios "0.0,0.25,0.5,0.75,1.0" --channels 3 --epochs 100 \
@@ -181,7 +184,9 @@ python src/make_paper_figures.py --data_root data/lohi \
   --subset "pore=40,deposit=150,discontinuity=300,stain=600" --channels 3 \
   --out_dir results
 
-# Standalone FID (default backend: pytorch-fid).
+# Standalone FID (default backend: pytorch-fid). The balance-to-max pool above
+# has no stain images (stain is the majority class), so this compares the three
+# classes present in both trees rather than all four.
 python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3
 # Published in-repo FID numbers used:
 #   python src/eval_fid.py --real_root data/lohi --fake_root generated --channels 3 --fid_backend legacy
@@ -250,9 +255,9 @@ the train pool, see the [limitations](docs/USAGE.md#limitations)):
 | 0.75 | 0.8141 | 0.7029 | 0.8064 | 0.5957 | 0.8977 | **0.4902** | 0.8281 |
 | 1.00 (balance-to-max) | 0.7392 | 0.6418 | 0.7403 | 0.6199 | 0.7932 | 0.3871 | 0.7669 |
 
-Both tables in this section were scored with `--selection final` and their FID
-figures with `--fid_backend legacy`; today's defaults are `best_val` and
-`pytorch_fid`, which are different protocols and different scales. **Repeating
+This table was scored with `--selection final` and its FID figures with
+`--fid_backend legacy`; the classifier default is `final` again since v0.6.0,
+while the FID default remains `pytorch_fid`, a different scale. **Repeating
 an unchanged real-only arm at the same seed moves macro-F1 by up to 0.127 and
 pore F1 by up to 0.255** (eight repeats across three seeds, measured in
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 11.7; the single repeat
@@ -301,10 +306,11 @@ Two findings, reported as measured:
 > today's code: [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 11.
 > Figure: `results/filling_rate_multiseed_v052.png`.
 
-Figures in `results/`. **Each one belongs to a specific run**, and only the
-first row is regenerable from what this repository ships - the rest need a
-generator checkpoint or per-ratio confusion matrices from the original run
-directories, which are git-ignored (see [Reproducibility](#reproducibility)):
+Figures in `results/`. **Each one belongs to a specific run.** The first five
+rows are regenerable from what this repository ships (`results/metrics/`); the
+last two need a generator checkpoint, and per-ratio confusion matrices from the
+original run directories, which are git-ignored (see
+[Reproducibility](#reproducibility)):
 
 | figure | run it was produced from | regenerable here? |
 |---|---|---|
@@ -367,9 +373,10 @@ versions are kept as `results/v0.2.0_*.png`.
 | pore | stain |
 | ![pore close-up](results/class_pore.png) | ![stain close-up](results/class_stain.png) |
 
-Published tables used `--selection final`. The current classifier default is
-`--selection best_val`. The downstream model is a from-scratch ResNet-18 on
-single frames, not the papers' LSTM/GRU. Full caveats:
+Published tables used `--selection final`, which is the classifier default again
+since v0.6.0; `--selection best_val` is an opt-in alternative protocol. The
+downstream model is a from-scratch ResNet-18 on single frames, not the papers'
+LSTM/GRU. Full caveats:
 [`docs/USAGE.md`](docs/USAGE.md#limitations) and
 [`docs/CALIBRATION.md`](docs/CALIBRATION.md) section 10.
 

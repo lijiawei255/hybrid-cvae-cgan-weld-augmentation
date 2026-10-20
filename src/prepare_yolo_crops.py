@@ -24,6 +24,7 @@ a ``data.yaml`` / ``classes.txt`` found at the input root. Per-class counts and
 the resulting imbalance ratio are printed so the imbalance - the property the
 method exists to address - is visible before any training starts.
 """
+
 import argparse
 from pathlib import Path
 
@@ -37,6 +38,7 @@ except ImportError:  # PyYAML is optional; --classes / classes.txt still work
 from data import IMG_EXTENSIONS
 
 LABEL_EXTENSIONS = (".yolo", ".txt")
+COLOR_MODES = {"RGB", "RGBA", "YCbCr", "P"}
 
 
 def read_class_names(input_root, classes_arg):
@@ -56,14 +58,23 @@ def read_class_names(input_root, classes_arg):
             parsed = yaml.safe_load(text)
             names = parsed.get("names")
             if isinstance(names, dict):
-                return [names[k] for k in sorted(names)]
+                # YAML may parse class ids as ints or strings; sort numerically
+                # when possible so "10" does not come before "2".
+                keys = sorted(
+                    names,
+                    key=lambda k: (
+                        (0, int(k)) if str(k).strip().isdigit() else (1, str(k))
+                    ),
+                )
+                return [names[k] for k in keys]
             if isinstance(names, list):
                 return [str(n) for n in names]
         else:
             return [line.strip() for line in text.splitlines() if line.strip()]
     raise SystemExit(
         f"no class names: pass them with --classes 'a,b,c' in class_id order, or put "
-        f"a data.yaml / classes.txt at {input_root}")
+        f"a data.yaml / classes.txt at {input_root}"
+    )
 
 
 def find_label(image_path):
@@ -100,27 +111,70 @@ def iter_images(input_root):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input_root", required=True,
-                    help="directory holding the detection data (any nesting)")
+    ap.add_argument(
+        "--input_root",
+        required=True,
+        help="directory holding the detection data (any nesting)",
+    )
     ap.add_argument("--out_root", required=True, help="class-folder tree to write")
-    ap.add_argument("--classes", default="",
-                    help="comma-separated names in class_id order, e.g. "
-                         "'pore,deposit,discontinuity,stain'")
+    ap.add_argument(
+        "--classes",
+        default="",
+        help="comma-separated names in class_id order, e.g. "
+        "'pore,deposit,discontinuity,stain'",
+    )
     ap.add_argument("--img_size", type=int, default=224)
-    ap.add_argument("--channels", type=int, default=3, choices=(1, 3),
-                    help="3 keeps a colour dataset's native channels; 1 converts to "
-                         "grayscale (only appropriate when the source is monochrome)")
-    ap.add_argument("--margin", type=float, default=0.1,
-                    help="fractional margin added around each box before cropping")
-    ap.add_argument("--min_side", type=int, default=16,
-                    help="skip crops whose longest box edge is below this many "
-                         "pixels (the filter has always tested the longest edge; "
-                         "the flag name is kept for compatibility)")
+    ap.add_argument(
+        "--channels",
+        type=int,
+        default=3,
+        choices=(1, 3),
+        help="3 keeps a colour dataset's native channels; 1 converts to "
+        "grayscale (only appropriate when the source is monochrome)",
+    )
+    ap.add_argument(
+        "--allow_grayscale",
+        action="store_true",
+        help="permit --channels 1 on colour source images. Without this, a colour "
+        "tree is refused the same way data.py refuses it, because silent "
+        "conversion hides defect signal",
+    )
+    ap.add_argument(
+        "--margin",
+        type=float,
+        default=0.1,
+        help="fractional margin added around each box before cropping",
+    )
+    ap.add_argument(
+        "--min_side",
+        type=int,
+        default=16,
+        help="skip crops whose longest box edge is below this many "
+        "pixels (the filter has always tested the longest edge; "
+        "the flag name is kept for compatibility)",
+    )
     args = ap.parse_args()
 
     input_root = Path(args.input_root)
     if not input_root.is_dir():
         raise SystemExit(f"input_root {input_root} is not a directory")
+    if args.img_size < 1:
+        raise SystemExit(f"--img_size must be >= 1, got {args.img_size}")
+    if args.min_side < 0:
+        raise SystemExit(f"--min_side must be >= 0, got {args.min_side}")
+    if args.margin < 0:
+        raise SystemExit(f"--margin must be >= 0, got {args.margin}")
+    if args.channels == 1 and not args.allow_grayscale:
+        first_image = next(iter_images(input_root), None)
+        if first_image is not None:
+            with Image.open(first_image) as handle:
+                if handle.mode in COLOR_MODES:
+                    raise SystemExit(
+                        f"{first_image} looks like {handle.mode} imagery; "
+                        f"--channels 1 would silently convert the colour tree to "
+                        f"grayscale. Pass --channels 3, or --allow_grayscale if "
+                        f"grayscale really is intended."
+                    )
     names = read_class_names(input_root, args.classes)
     print(f"classes ({len(names)}): {names}")
 
@@ -134,13 +188,18 @@ def main():
             continue
         with Image.open(image_path) as handle:
             width, height = handle.size
-            lines = [ln.split() for ln in
-                     label_path.read_text(encoding="utf-8-sig").splitlines() if ln.strip()]
+            lines = [
+                ln.split()
+                for ln in label_path.read_text(encoding="utf-8-sig").splitlines()
+                if ln.strip()
+            ]
             for k, parts in enumerate(lines):
                 if len(parts) < 5:
                     bad_lines += 1
-                    print(f"warning: {label_path.name}:{k + 1} has {len(parts)} fields, "
-                          f"expected 'class xc yc w h'; skipped")
+                    print(
+                        f"warning: {label_path.name}:{k + 1} has {len(parts)} fields, "
+                        f"expected 'class xc yc w h'; skipped"
+                    )
                     continue
                 try:
                     class_id = int(parts[0])
@@ -152,7 +211,8 @@ def main():
                 if not 0 <= class_id < len(names):
                     raise SystemExit(
                         f"{label_path.name} references class_id {class_id}, outside "
-                        f"0..{len(names) - 1} for names {names}")
+                        f"0..{len(names) - 1} for names {names}"
+                    )
                 bw, bh = w * width, h * height
                 if max(bw, bh) < args.min_side:
                     skipped += 1
@@ -160,12 +220,18 @@ def main():
                 cx, cy = xc * width, yc * height
                 half_w = bw * (1 + args.margin) / 2
                 half_h = bh * (1 + args.margin) / 2
-                box = (int(max(0, cx - half_w)), int(max(0, cy - half_h)),
-                       int(min(width, cx + half_w)), int(min(height, cy + half_h)))
+                box = (
+                    int(max(0, cx - half_w)),
+                    int(max(0, cy - half_h)),
+                    int(min(width, cx + half_w)),
+                    int(min(height, cy + half_h)),
+                )
                 if box[0] >= box[2] or box[1] >= box[3]:
                     bad_lines += 1
-                    print(f"warning: {label_path.name}:{k + 1} box {box} is empty after "
-                          f"clamping to the frame; skipped")
+                    print(
+                        f"warning: {label_path.name}:{k + 1} box {box} is empty after "
+                        f"clamping to the frame; skipped"
+                    )
                     continue
                 crop = handle.crop(box).convert("L" if args.channels == 1 else "RGB")
                 crop = crop.resize((args.img_size, args.img_size), Image.BILINEAR)
@@ -173,15 +239,19 @@ def main():
                 folder.mkdir(parents=True, exist_ok=True)
                 # Include the relative path: same-stem images in different
                 # subfolders must not overwrite each other and understate counts.
-                stem = "__".join(image_path.relative_to(input_root).with_suffix("").parts)
+                stem = "__".join(
+                    image_path.relative_to(input_root).with_suffix("").parts
+                )
                 crop.save(folder / f"{stem}_{k:03d}.png")
                 counts[names[class_id]] += 1
                 written += 1
 
-    print(f"wrote {written} crops to {out_root} "
-          f"({no_label} images without labels, {skipped} boxes below --min_side "
-          f"on their longest edge, "
-          f"{bad_lines} malformed/inverted boxes skipped)")
+    print(
+        f"wrote {written} crops to {out_root} "
+        f"({no_label} images without labels, {skipped} boxes below --min_side "
+        f"on their longest edge, "
+        f"{bad_lines} malformed/inverted boxes skipped)"
+    )
     for name, count in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"  {name:<20} {count}")
     if counts:

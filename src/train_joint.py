@@ -44,6 +44,7 @@ reparameterized sample, so the early-stopping and LR-schedule signals are not
 jittered by latent noise. Training still samples z, which is what makes
 generation from z ~ N(0, I) work at inference time.
 """
+
 import argparse
 import csv
 import random
@@ -56,14 +57,35 @@ from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from torchvision import transforms
 from torchvision.utils import save_image
 
-from data import (ClassFolderDataset, FFTLowPass, assert_channels_match_data,
-                  balanced_sample_weights, count_by_class, make_splits,
-                  parse_name_counts, sample_named_subset)
-from eval_fid import (DEFAULT_FID_BACKEND, FID_BACKENDS, FeatureExtractor,
-                      _stats, balanced_labels, frechet_distance)
-from models import (ADV_LOSSES, DEFAULT_ADV_LOSS, Decoder, Discriminator, Encoder,
-                    PerceptualLoss, cvae_loss, kl_schedule, reparameterize,
-                    weights_init)
+from data import (
+    ClassFolderDataset,
+    FFTLowPass,
+    assert_channels_match_data,
+    balanced_sample_weights,
+    count_by_class,
+    make_splits,
+    parse_name_counts,
+    sample_named_subset,
+)
+from eval_fid import (
+    DEFAULT_FID_BACKEND,
+    FID_BACKENDS,
+    FeatureExtractor,
+    _stats,
+    frechet_distance,
+)
+from models import (
+    ADV_LOSSES,
+    DEFAULT_ADV_LOSS,
+    Decoder,
+    Discriminator,
+    Encoder,
+    PerceptualLoss,
+    cvae_loss,
+    kl_schedule,
+    reparameterize,
+    weights_init,
+)
 
 
 def parse_kl_warmup(text):
@@ -95,20 +117,30 @@ def save_sample_grid(enc, dec, x, y, latent_dim, path, nrow=8):
     validation loss and FID of every later epoch.
     """
     was_training = enc.training
-    enc.eval(); dec.eval()
+    enc.eval()
+    dec.eval()
     with torch.no_grad():
         mu, _ = enc(x, y)
         recon = dec(mu, y)
         gen = dec(torch.randn(x.size(0), latent_dim, device=x.device), y)
     if was_training:
-        enc.train(); dec.train()
+        enc.train()
+        dec.train()
     save_image(torch.cat([x, recon, gen], dim=0), path, nrow=nrow)
 
 
 @torch.no_grad()
 def validate(enc, dec, perc, loader, device, kl_weight, perc_weight):
-    """Deterministic validation loss; returns (total, recon) averaged per image."""
-    enc.eval(); dec.eval()
+    """Deterministic validation loss; returns (total, recon) averaged per image.
+
+    The adversarial term is deliberately excluded: this is the metric used for
+    early stopping and the LR schedule, and it should measure reconstruction
+    quality rather than the current discriminator's score. ``total`` therefore
+    is ``recon + kl_weight*KL + perc_weight*perceptual``, not the full training
+    objective printed as ``loss_g`` in ``history.csv``.
+    """
+    enc.eval()
+    dec.eval()
     total = recon_sum = kl_sum = perc_sum = n = 0.0
     for x, y in loader:
         x, y = x.to(device), y.to(device)
@@ -121,10 +153,12 @@ def validate(enc, dec, perc, loader, device, kl_weight, perc_weight):
         recon_sum += l_recon.item() * b
         kl_sum += l_kl.item() * b
         perc_sum += l_perc.item() * b
-        total += (l_recon.item() + kl_weight * l_kl.item()
-                  + perc_weight * l_perc.item()) * b
+        total += (
+            l_recon.item() + kl_weight * l_kl.item() + perc_weight * l_perc.item()
+        ) * b
         n += b
-    enc.train(); dec.train()
+    enc.train()
+    dec.train()
     return total / n, recon_sum / n
 
 
@@ -132,115 +166,191 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_root", required=True)
     ap.add_argument("--out_dir", default="runs/joint")
-    ap.add_argument("--subset", required=True,
-                    help="generator training subset by class NAME, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'")
-    ap.add_argument("--val_per_class", type=int, default=200,
-                    help="real validation images per class; also the FID reference set. "
-                         "Must fit inside the smallest class's train-pool remainder "
-                         "after --subset is drawn")
+    ap.add_argument(
+        "--subset",
+        required=True,
+        help="generator training subset by class NAME, e.g. 'pore=40,deposit=150,discontinuity=300,stain=600'. "
+        "By default this must name every dataset class with a positive count; "
+        "see --allow_partial_subset.",
+    )
+    ap.add_argument(
+        "--allow_partial_subset",
+        action="store_true",
+        help="allow --subset to omit a class or set it to 0. Validation and the "
+        "FID reference are then restricted to the classes actually present, "
+        "because scoring a class the model never trained on silently changes "
+        "early stopping. train_classifier.py has its own flag for its selection "
+        "pool",
+    )
+    ap.add_argument(
+        "--val_per_class",
+        type=int,
+        default=200,
+        help="real validation images per class; also the FID reference set. "
+        "Must fit inside the smallest class's train-pool remainder "
+        "after --subset is drawn",
+    )
     ap.add_argument("--test_frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--img_size", type=int, default=224)
-    ap.add_argument("--channels", type=int, default=3,
-                    help="3 for RGB (LoHi-WELD default); 1 for grayscale. "
-                         "Refuses --channels 1 on colour files.")
-    ap.add_argument("--fft_denoise", action="store_true",
-                    help="apply the paper's FFT circular low-pass denoising step")
+    ap.add_argument(
+        "--channels",
+        type=int,
+        default=3,
+        choices=(1, 3),
+        help="3 for RGB (LoHi-WELD default); 1 for grayscale. "
+        "Refuses --channels 1 on colour files.",
+    )
+    ap.add_argument(
+        "--fft_denoise",
+        action="store_true",
+        help="apply the paper's FFT circular low-pass denoising step",
+    )
     ap.add_argument("--fft_cutoff", type=float, default=0.25)
     ap.add_argument("--latent_dim", type=int, default=32)
     ap.add_argument("--base_ch", type=int, default=64)
     ap.add_argument("--epochs", type=int, default=70)
     ap.add_argument("--batch_size", type=int, default=8)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--lr_d", type=float, default=1e-3,
-                    help="discriminator lr; kept at the paper's 1e-3 because hinge loss plus "
-                         "spectral normalisation keep D in equilibrium on small data (measured on "
-                         "LoHi-WELD: FID declined 371 -> ~200). The lower values recorded in "
-                         "docs/CALIBRATION.md were calibrated under the superseded BCE objective, "
-                         "where an unbounded adversarial term let a saturated D overwhelm "
-                         "reconstruction.")
-    ap.add_argument("--kl_weight", type=float, default=0.015,
-                    help="KL weight equivalent to the paper's beta=30 under this repo's "
-                         "mean-normalised [0,1] losses: beta_eq = 30 * latent_dim / 65025, "
-                         "so 0.015 at the default --latent_dim 32 and 0.059 at "
-                         "--latent_dim 128 (the recommended LoHi-WELD configuration; "
-                         "docs/CALIBRATION.md sections 1 and 9). The paper reports recon "
-                         "converging to ~1000 and KL stabilising near 9.0, consistent with "
-                         "recon as a mean over pixels on a [0,255] scale and KL summed over "
-                         "its 32 latent dims. Sweep measured on RIAWELC at latent_dim 32: "
-                         "0.006 leaves KL ~6x the paper's, 0.015 matches its order without "
-                         "collapse, >=0.05 collapses the posterior and degrades "
-                         "reconstruction.")
+    ap.add_argument(
+        "--lr_d",
+        type=float,
+        default=1e-3,
+        help="discriminator lr; kept at the paper's 1e-3 because hinge loss plus "
+        "spectral normalisation keep D in equilibrium on small data (measured on "
+        "LoHi-WELD: FID declined 371 -> ~200). The lower values recorded in "
+        "docs/CALIBRATION.md were calibrated under the superseded BCE objective, "
+        "where an unbounded adversarial term let a saturated D overwhelm "
+        "reconstruction.",
+    )
+    ap.add_argument(
+        "--kl_weight",
+        type=float,
+        default=0.015,
+        help="KL weight equivalent to the paper's beta=30 under this repo's "
+        "mean-normalised [0,1] losses: beta_eq = 30 * latent_dim / 65025, "
+        "so 0.015 at the default --latent_dim 32 and 0.059 at "
+        "--latent_dim 128 (the recommended LoHi-WELD configuration; "
+        "docs/CALIBRATION.md sections 1 and 9). The paper reports recon "
+        "converging to ~1000 and KL stabilising near 9.0, consistent with "
+        "recon as a mean over pixels on a [0,255] scale and KL summed over "
+        "its 32 latent dims. Sweep measured on RIAWELC at latent_dim 32: "
+        "0.006 leaves KL ~6x the paper's, 0.015 matches its order without "
+        "collapse, >=0.05 collapses the posterior and degrades "
+        "reconstruction.",
+    )
     ap.add_argument("--perc_weight", type=float, default=0.1, help="paper's lambda")
-    ap.add_argument("--adv_weight", type=float, default=0.1,
-                    help="adversarial weight (paper's gamma is 1.0). At 1.0 the bounded hinge "
-                         "term is still ~20x the reconstruction term on a small training set and "
-                         "reconstruction never converges (measured 0.09-0.12 vs a 0.038 "
-                         "constant-mean baseline); at 0.1 it converges to 0.035 with the "
-                         "discriminator in a healthy equilibrium. Dataset-scale calibration, "
-                         "see docs/CALIBRATION.md.")
-    ap.add_argument("--patience", type=int, default=10, help="early-stopping patience in epochs")
+    ap.add_argument(
+        "--adv_weight",
+        type=float,
+        default=0.1,
+        help="adversarial weight (paper's gamma is 1.0). At 1.0 the bounded hinge "
+        "term is still ~20x the reconstruction term on a small training set and "
+        "reconstruction never converges (measured 0.09-0.12 vs a 0.038 "
+        "constant-mean baseline); at 0.1 it converges to 0.035 with the "
+        "discriminator in a healthy equilibrium. Dataset-scale calibration, "
+        "see docs/CALIBRATION.md.",
+    )
+    ap.add_argument(
+        "--patience", type=int, default=10, help="early-stopping patience in epochs"
+    )
     ap.add_argument("--lr_factor", type=float, default=0.2)
     ap.add_argument("--lr_patience", type=int, default=5)
-    ap.add_argument("--split_by", choices=("crop", "source"), default="crop",
-                    help="'crop' (default) is the published protocol: a stratified split of "
-                         "individual crops, under which 99.8-100%% of test crops share a source "
-                         "frame with the train pool (docs/CALIBRATION.md section 9). 'source' "
-                         "assigns each source frame as a whole, so no frame straddles the split; "
-                         "it answers a different question and its numbers are not comparable to "
-                         "the published tables.")
-    ap.add_argument("--adv_loss", choices=tuple(ADV_LOSSES), default=DEFAULT_ADV_LOSS,
-                    help="adversarial objective. 'hinge' (default, with spectral normalisation) "
-                         "is the journal extension's and is what every tagged run used. 'bce' is "
-                         "the conference paper's minimax objective; combined with "
-                         "--no_d_spectral_norm it is that paper's original configuration, which "
-                         "is expressible on purpose but was measured to fail at this data scale "
-                         "(docs/CALIBRATION.md section 6): its generator term is unbounded above, "
-                         "so a confident discriminator overwhelms reconstruction.")
-    ap.add_argument("--no_d_spectral_norm", dest="d_spectral_norm", action="store_false",
-                    help="drop spectral normalisation from the discriminator. Default is on, as "
-                         "in the journal extension; off plus --adv_loss bce is the conference "
-                         "paper's original, unbounded configuration.")
+    ap.add_argument(
+        "--split_by",
+        choices=("crop", "source"),
+        default="crop",
+        help="'crop' (default) is the published protocol: a stratified split of "
+        "individual crops, under which 99.8-100%% of test crops share a source "
+        "frame with the train pool (docs/CALIBRATION.md section 9). 'source' "
+        "assigns each source frame as a whole, so no frame straddles the split; "
+        "it answers a different question and its numbers are not comparable to "
+        "the published tables.",
+    )
+    ap.add_argument(
+        "--adv_loss",
+        choices=tuple(ADV_LOSSES),
+        default=DEFAULT_ADV_LOSS,
+        help="adversarial objective. 'hinge' (default, with spectral normalisation) "
+        "is the journal extension's and is what every tagged run used. 'bce' is "
+        "the conference paper's minimax objective; combined with "
+        "--no_d_spectral_norm it is that paper's original configuration, which "
+        "is expressible on purpose but was measured to fail at this data scale "
+        "(docs/CALIBRATION.md section 6): its generator term is unbounded above, "
+        "so a confident discriminator overwhelms reconstruction.",
+    )
+    ap.add_argument(
+        "--no_d_spectral_norm",
+        dest="d_spectral_norm",
+        action="store_false",
+        help="drop spectral normalisation from the discriminator. Default is on, as "
+        "in the journal extension; off plus --adv_loss bce is the conference "
+        "paper's original, unbounded configuration.",
+    )
     ap.set_defaults(d_spectral_norm=True)
-    ap.add_argument("--g_norm", choices=("batch", "group"), default="batch",
-                    help="encoder/decoder normalisation. 'batch' is what every tagged run used "
-                         "and is the default. The journal paper's Table 3 lists GroupNorm for "
-                         "*every* network, not only the discriminator, so 'group' is what "
-                         "reproducing it fully requires; unlike --d_norm this has not been "
-                         "measured here.")
-    ap.add_argument("--d_norm", choices=("batch", "group"), default="batch",
-                    help="discriminator normalisation. 'batch' is what the tagged v0.2.0 runs "
-                         "used; 'group' is the journal paper's Table 3 choice, made \"to ensure "
-                         "stability with small batch sizes, avoiding the statistical instability "
-                         "associated with Batch Normalisation\". At --batch_size 8 a BatchNorm D "
-                         "scores an image using statistics from its seven batch neighbours; our "
-                         "measured hinge_d sits at a median of 0.82 (dominant D, 97%% of epochs "
-                         "below 1.5) where the paper reports an equilibrium near 2.0.")
-    ap.add_argument("--weighted_sampler", action="store_true",
-                    help="draw training batches with WeightedRandomSampler at P ~ 1/N_class, the "
-                         "journal paper's data-balancing strategy. Off by default so the tagged "
-                         "v0.2.0 runs stay reproducible. --subset caps per-class counts but does "
-                         "not balance batches: a 40-image class in a 1090-image subset is 3.7%% of "
-                         "draws, so most batch_size=8 minibatches contain none of it.")
-    ap.add_argument("--kl_warmup", default="",
-                    help="KL annealing as 'ZERO,RAMP' epoch counts; empty (default) holds beta "
-                         "constant, which is what the tagged v0.2.0 runs used. The journal paper "
-                         "holds beta at 0 for 10 epochs then ramps linearly to its 0.5 target "
-                         "over 50, naming a constant high beta as what \"risks posterior collapse "
-                         "where the encoder ignores inputs\". Its schedule needs the --epochs "
-                         "200 protocol: inside paper 1's 70 epochs only 10 epochs would run at "
-                         "full beta.")
-    ap.add_argument("--monitor", choices=("val_loss", "val_recon"), default="val_loss",
-                    help="metric fed to ReduceLROnPlateau and early stopping. 'val_loss' is the "
-                         "tagged v0.2.0 behaviour; 'val_recon' is the journal paper's, whose "
-                         "scheduler \"monitored validation reconstruction loss\". This matters "
-                         "under --kl_warmup: the total includes beta*KL, so a rising ramp trips "
-                         "the scheduler and early stopping on its own schedule rather than on "
-                         "reconstruction quality.")
-    ap.add_argument("--fid_backend", choices=FID_BACKENDS, default=DEFAULT_FID_BACKEND,
-                    help="pytorch_fid (default) uses mseitzer/pytorch-fid; legacy "
-                         "reproduces published in-repo FID numbers. Scales differ.")
-    ap.add_argument("--fid_every", type=int, default=1, help="paper computes FID every epoch")
+    ap.add_argument(
+        "--g_norm",
+        choices=("batch", "group"),
+        default="batch",
+        help="encoder/decoder normalisation. 'batch' is what every tagged run used "
+        "and is the default. The journal paper's Table 3 lists GroupNorm for "
+        "*every* network, not only the discriminator, so 'group' is what "
+        "reproducing it fully requires; unlike --d_norm this has not been "
+        "measured here.",
+    )
+    ap.add_argument(
+        "--d_norm",
+        choices=("batch", "group"),
+        default="batch",
+        help="discriminator normalisation. 'batch' is what the tagged v0.2.0 runs "
+        "used; 'group' is the journal paper's Table 3 choice, made \"to ensure "
+        "stability with small batch sizes, avoiding the statistical instability "
+        'associated with Batch Normalisation". At --batch_size 8 a BatchNorm D '
+        "scores an image using statistics from its seven batch neighbours; our "
+        "measured hinge_d sits at a median of 0.82 (dominant D, 97%% of epochs "
+        "below 1.5) where the paper reports an equilibrium near 2.0.",
+    )
+    ap.add_argument(
+        "--weighted_sampler",
+        action="store_true",
+        help="draw training batches with WeightedRandomSampler at P ~ 1/N_class, the "
+        "journal paper's data-balancing strategy. Off by default so the tagged "
+        "v0.2.0 runs stay reproducible. --subset caps per-class counts but does "
+        "not balance batches: a 40-image class in a 1090-image subset is 3.7%% of "
+        "draws, so most batch_size=8 minibatches contain none of it.",
+    )
+    ap.add_argument(
+        "--kl_warmup",
+        default="",
+        help="KL annealing as 'ZERO,RAMP' epoch counts; empty (default) holds beta "
+        "constant, which is what the tagged v0.2.0 runs used. The journal paper "
+        "holds beta at 0 for 10 epochs then ramps linearly to its 0.5 target "
+        'over 50, naming a constant high beta as what "risks posterior collapse '
+        'where the encoder ignores inputs". Its schedule needs the --epochs '
+        "200 protocol: inside paper 1's 70 epochs only 10 epochs would run at "
+        "full beta.",
+    )
+    ap.add_argument(
+        "--monitor",
+        choices=("val_loss", "val_recon"),
+        default="val_loss",
+        help="metric fed to ReduceLROnPlateau and early stopping. 'val_loss' is the "
+        "tagged v0.2.0 behaviour; 'val_recon' is the journal paper's, whose "
+        'scheduler "monitored validation reconstruction loss". This matters '
+        "under --kl_warmup: the total includes beta*KL, so a rising ramp trips "
+        "the scheduler and early stopping on its own schedule rather than on "
+        "reconstruction quality.",
+    )
+    ap.add_argument(
+        "--fid_backend",
+        choices=FID_BACKENDS,
+        default=DEFAULT_FID_BACKEND,
+        help="pytorch_fid (default) uses mseitzer/pytorch-fid; legacy "
+        "reproduces published in-repo FID numbers. Scales differ.",
+    )
+    ap.add_argument(
+        "--fid_every", type=int, default=1, help="paper computes FID every epoch"
+    )
     ap.add_argument("--sample_every", type=int, default=10)
     ap.add_argument("--num_workers", type=int, default=4)
     args = ap.parse_args()
@@ -253,58 +363,176 @@ def main():
         raise SystemExit("--val_per_class must be >= 1")
     if not 0.0 < args.test_frac < 1.0:
         raise SystemExit(f"--test_frac must be in (0, 1), got {args.test_frac}")
+    if args.img_size < 16 or args.img_size % 16:
+        raise SystemExit(
+            f"--img_size must be >= 16 and divisible by 16, got {args.img_size}"
+        )
+    if args.latent_dim < 1:
+        raise SystemExit(f"--latent_dim must be >= 1, got {args.latent_dim}")
+    if args.base_ch < 2:
+        raise SystemExit(f"--base_ch must be >= 2, got {args.base_ch}")
+    if args.epochs < 1:
+        raise SystemExit(f"--epochs must be >= 1, got {args.epochs}")
+    if args.batch_size < 2:
+        raise SystemExit(
+            f"--batch_size must be >= 2 (BatchNorm needs more than one sample), "
+            f"got {args.batch_size}"
+        )
+    if args.num_workers < 0:
+        raise SystemExit(f"--num_workers must be >= 0, got {args.num_workers}")
+    if args.lr <= 0 or args.lr_d <= 0:
+        raise SystemExit(
+            f"--lr and --lr_d must be positive, got {args.lr}, {args.lr_d}"
+        )
+    if args.kl_weight < 0 or args.perc_weight < 0 or args.adv_weight < 0:
+        raise SystemExit(
+            f"loss weights must be non-negative, got kl={args.kl_weight}, "
+            f"perc={args.perc_weight}, adv={args.adv_weight}"
+        )
+    if args.patience < 1 or args.lr_patience < 0:
+        raise SystemExit(
+            f"--patience must be >= 1 and --lr_patience >= 0, got "
+            f"{args.patience}, {args.lr_patience}"
+        )
+    if not 0.0 < args.lr_factor < 1.0:
+        raise SystemExit(f"--lr_factor must be in (0, 1), got {args.lr_factor}")
+    if args.fid_every < 0 or args.sample_every < 0:
+        raise SystemExit(
+            f"--fid_every and --sample_every must be >= 0, got "
+            f"{args.fid_every}, {args.sample_every}"
+        )
+    if not 0.0 < args.fft_cutoff <= 1.0:
+        raise SystemExit(f"--fft_cutoff must be in (0, 1], got {args.fft_cutoff}")
 
-    random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     assert_channels_match_data(args.data_root, args.channels)
-    ds = ClassFolderDataset(args.data_root, args.img_size, args.channels,
-                            args.fft_denoise, args.fft_cutoff)
+    ds = ClassFolderDataset(
+        args.data_root, args.img_size, args.channels, args.fft_denoise, args.fft_cutoff
+    )
     classes, num_classes = ds.classes, len(ds.classes)
     if not ds.samples:
         raise SystemExit(f"no images found under {args.data_root}")
 
     # ---- crop-level splits (indices disjoint; source frames may straddle) -----
-    train_pool, test_idx = make_splits(ds.samples, args.test_frac, args.seed, args.split_by)
+    train_pool, test_idx = make_splits(
+        ds.samples, args.test_frac, args.seed, args.split_by
+    )
     subset_counts = parse_name_counts(args.subset)
+    unknown = sorted(set(subset_counts) - set(classes))
+    if unknown:
+        raise SystemExit(
+            f"--subset names unknown class(es) {unknown}; dataset classes are {classes}"
+        )
+    missing = [c for c in classes if c not in subset_counts]
+    zero = [c for c in classes if c in subset_counts and subset_counts[c] == 0]
+    if missing or zero:
+        detail = []
+        if missing:
+            detail.append(f"missing {missing}")
+        if zero:
+            detail.append(f"zero {zero}")
+        message = (
+            f"--subset does not give every dataset class a positive count "
+            f"({'; '.join(detail)}). A generator trained without a class cannot "
+            f"be validated on it without silently changing early stopping."
+        )
+        if not args.allow_partial_subset:
+            raise SystemExit(
+                message + " Pass --allow_partial_subset to train on "
+                "the selected classes only."
+            )
+        print(
+            f"warning: {message}; validation and FID are restricted to "
+            f"{sorted(set(subset_counts) & set(classes))}"
+        )
+    active_names = [c for c in classes if subset_counts.get(c, 0) > 0]
+    if not active_names:
+        raise SystemExit("--subset selects no images; nothing to train on")
+    active_labels = [classes.index(c) for c in active_names]
     gen_train = sample_named_subset(ds, subset_counts, train_pool, args.seed)
     used = set(gen_train)
     remaining = [i for i in train_pool if i not in used]
-    gen_val = sample_named_subset(ds, {c: args.val_per_class for c in classes},
-                                 remaining, args.seed + 1)
+    gen_val = sample_named_subset(
+        ds, {c: args.val_per_class for c in active_names}, remaining, args.seed + 1
+    )
 
     print(f"classes ({num_classes}): {classes}")
-    print(f"device={device} img_size={args.img_size} channels={args.channels} "
-          f"fft_denoise={args.fft_denoise} fid_backend={args.fid_backend}")
-    print(f"d_norm={args.d_norm} g_norm={args.g_norm} adv_loss={args.adv_loss} "
-          f"d_spectral_norm={args.d_spectral_norm} weighted_sampler={args.weighted_sampler} "
-          f"kl_warmup={kl_zero},{kl_ramp} monitor={args.monitor} split_by={args.split_by}")
-    print(f"held-out real test (never seen by generator or classifier training): "
-          f"{count_by_class(ds, test_idx)} -> {len(test_idx)}")
-    print(f"generator train subset: {count_by_class(ds, gen_train)} -> {len(gen_train)}")
-    print(f"generator validation / FID reference: {count_by_class(ds, gen_val)} -> {len(gen_val)}")
+    print(
+        f"device={device} img_size={args.img_size} channels={args.channels} "
+        f"fft_denoise={args.fft_denoise} fid_backend={args.fid_backend}"
+    )
+    print(
+        f"d_norm={args.d_norm} g_norm={args.g_norm} adv_loss={args.adv_loss} "
+        f"d_spectral_norm={args.d_spectral_norm} weighted_sampler={args.weighted_sampler} "
+        f"kl_warmup={kl_zero},{kl_ramp} monitor={args.monitor} split_by={args.split_by}"
+    )
+    print(
+        f"held-out real test (never seen by generator or classifier training): "
+        f"{count_by_class(ds, test_idx)} -> {len(test_idx)}"
+    )
+    print(
+        f"generator train subset: {count_by_class(ds, gen_train)} -> {len(gen_train)}"
+    )
+    print(
+        f"generator validation / FID reference: {count_by_class(ds, gen_val)} -> {len(gen_val)}"
+    )
 
-    out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
-    dl_kw = dict(num_workers=args.num_workers, pin_memory=(device == "cuda"),
-                 persistent_workers=args.num_workers > 0)
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    dl_kw = dict(
+        num_workers=args.num_workers,
+        pin_memory=(device == "cuda"),
+        persistent_workers=args.num_workers > 0,
+    )
     sampler = None
     if args.weighted_sampler:
         labels = [ds.samples[i][1] for i in gen_train]
-        sampler = WeightedRandomSampler(balanced_sample_weights(labels),
-                                        num_samples=len(gen_train), replacement=True)
-    loader = DataLoader(Subset(ds, gen_train), batch_size=args.batch_size,
-                        shuffle=sampler is None, sampler=sampler,
-                        drop_last=True, **dl_kw)
-    val_loader = DataLoader(Subset(ds, gen_val), batch_size=64, shuffle=False,
-                            drop_last=False, **dl_kw)
+        sampler = WeightedRandomSampler(
+            balanced_sample_weights(labels),
+            num_samples=len(gen_train),
+            replacement=True,
+        )
+    loader = DataLoader(
+        Subset(ds, gen_train),
+        batch_size=args.batch_size,
+        shuffle=sampler is None,
+        sampler=sampler,
+        drop_last=True,
+        **dl_kw,
+    )
+    val_loader = DataLoader(
+        Subset(ds, gen_val), batch_size=64, shuffle=False, drop_last=False, **dl_kw
+    )
 
     # ---- models --------------------------------------------------------------
-    enc = Encoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size,
-                  norm=args.g_norm).to(device)
-    dec = Decoder(args.channels, num_classes, args.latent_dim, args.base_ch, args.img_size,
-                  norm=args.g_norm).to(device)
-    dis = Discriminator(args.channels, num_classes, args.base_ch, args.img_size,
-                        norm=args.d_norm, spectral=args.d_spectral_norm).to(device)
+    enc = Encoder(
+        args.channels,
+        num_classes,
+        args.latent_dim,
+        args.base_ch,
+        args.img_size,
+        norm=args.g_norm,
+    ).to(device)
+    dec = Decoder(
+        args.channels,
+        num_classes,
+        args.latent_dim,
+        args.base_ch,
+        args.img_size,
+        norm=args.g_norm,
+    ).to(device)
+    dis = Discriminator(
+        args.channels,
+        num_classes,
+        args.base_ch,
+        args.img_size,
+        norm=args.d_norm,
+        spectral=args.d_spectral_norm,
+    ).to(device)
     adv_d, adv_g = ADV_LOSSES[args.adv_loss]
     # DCGAN init is applied to the discriminator only; the encoder and decoder
     # keep PyTorch's default init. Every tagged run used this asymmetry, so it
@@ -312,17 +540,29 @@ def main():
     dis.apply(weights_init)
     perc = PerceptualLoss(args.channels).to(device)
 
-    opt_g = torch.optim.Adam(list(enc.parameters()) + list(dec.parameters()), lr=args.lr)
+    opt_g = torch.optim.Adam(
+        list(enc.parameters()) + list(dec.parameters()), lr=args.lr
+    )
     opt_d = torch.optim.Adam(dis.parameters(), lr=args.lr_d)
     sched_g = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt_g, factor=args.lr_factor, patience=args.lr_patience)
+        opt_g, factor=args.lr_factor, patience=args.lr_patience
+    )
+    # Both schedulers follow the generator's monitored validation metric. This
+    # is a protocol choice, not an oversight: the discriminator's own loss is
+    # not used for its LR schedule, so a D that happens to diverge does not
+    # silently change the generator's schedule.
     sched_d = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt_d, factor=args.lr_factor, patience=args.lr_patience)
+        opt_d, factor=args.lr_factor, patience=args.lr_patience
+    )
 
     # ---- fixed FID reference (real validation images, class-balanced) ---------
     extractor = FeatureExtractor(args.fid_backend, device)
     mu_r, s_r = _stats(extractor.features(val_loader))
-    fid_labels = balanced_labels(num_classes, args.val_per_class, device)
+    # The FID reference contains one block per class actually in --subset, so a
+    # deliberately partial run does not score labels the decoder never saw.
+    fid_labels = torch.tensor(
+        active_labels, dtype=torch.long, device=device
+    ).repeat_interleave(args.val_per_class)
 
     # With --fft_denoise the real reference above goes through the dataset's
     # FFT low-pass on uint8-quantised pixels. Route generated images through
@@ -331,9 +571,13 @@ def main():
     # eval_fid.py, which applies one load path to both trees.
     gen_post = None
     if args.fft_denoise:
-        gen_post = transforms.Compose([transforms.ToPILImage(),
-                                       FFTLowPass(args.fft_cutoff),
-                                       transforms.ToTensor()])
+        gen_post = transforms.Compose(
+            [
+                transforms.ToPILImage(),
+                FFTLowPass(args.fft_cutoff),
+                transforms.ToTensor(),
+            ]
+        )
 
     def compute_fid():
         dec.eval()
@@ -354,24 +598,48 @@ def main():
     per_class_grid = max(1, 16 // num_classes)
     grid_idx = []
     for label in range(num_classes):
-        grid_idx.extend([i for i in gen_val if ds.samples[i][1] == label][:per_class_grid])
-    grid_x, grid_y = next(iter(DataLoader(Subset(ds, grid_idx),
-                                          batch_size=len(grid_idx), shuffle=False)))
+        grid_idx.extend(
+            [i for i in gen_val if ds.samples[i][1] == label][:per_class_grid]
+        )
+    grid_x, grid_y = next(
+        iter(DataLoader(Subset(ds, grid_idx), batch_size=len(grid_idx), shuffle=False))
+    )
     grid_x, grid_y = grid_x.to(device), grid_y.to(device)
     grid_nrow = grid_x.size(0)
 
     history_path = out / "history.csv"
     with open(history_path, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow(["epoch", "beta", "recon", "kl", "perc", "loss_g", "loss_d",
-                                "val_loss", "val_recon", "fid", "lr", "seconds"])
+        csv.writer(f).writerow(
+            [
+                "epoch",
+                "beta",
+                "recon",
+                "kl",
+                "perc",
+                "loss_g",
+                "loss_d",
+                "val_loss",
+                "val_recon",
+                "fid",
+                "lr",
+                "seconds",
+            ]
+        )
 
-    best = {"val": float("inf"), "monitored": float("inf"), "epoch": 0,
-            "fid": float("nan"), "state": None}
+    best = {
+        "val": float("inf"),
+        "monitored": float("inf"),
+        "epoch": 0,
+        "fid": float("nan"),
+        "state": None,
+    }
     bad_epochs = 0
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
         beta = kl_schedule(epoch, args.kl_weight, kl_zero, kl_ramp)
-        enc.train(); dec.train(); dis.train()
+        enc.train()
+        dec.train()
+        dis.train()
         agg = dict(recon=0.0, kl=0.0, perc=0.0, g=0.0, d=0.0)
         steps = 0
         for x, y in loader:
@@ -392,8 +660,11 @@ def main():
                 # otherwise the rest of the run silently writes nan history rows.
                 raise SystemExit(
                     f"non-finite generator loss at epoch {epoch} step {steps + 1} "
-                    f"(loss_g={loss_g.item():.4g}); training diverged")
-            opt_g.zero_grad(); loss_g.backward(); opt_g.step()
+                    f"(loss_g={loss_g.item():.4g}); training diverged"
+                )
+            opt_g.zero_grad()
+            loss_g.backward()
+            opt_g.step()
 
             # ---- discriminator side: separate backward pass, same minibatch ---
             fake_d = dec(torch.randn(b, args.latent_dim, device=device), y).detach()
@@ -402,11 +673,16 @@ def main():
                 # Same guard as the generator side, before this network's backward().
                 raise SystemExit(
                     f"non-finite discriminator loss at epoch {epoch} step {steps + 1} "
-                    f"(loss_d={loss_d.item():.4g}); training diverged")
-            opt_d.zero_grad(); loss_d.backward(); opt_d.step()
+                    f"(loss_d={loss_d.item():.4g}); training diverged"
+                )
+            opt_d.zero_grad()
+            loss_d.backward()
+            opt_d.step()
 
-            agg["recon"] += l_recon.item(); agg["kl"] += l_kl.item()
-            agg["perc"] += l_perc.item(); agg["g"] += loss_g.item()
+            agg["recon"] += l_recon.item()
+            agg["kl"] += l_kl.item()
+            agg["perc"] += l_perc.item()
+            agg["g"] += loss_g.item()
             agg["d"] += loss_d.item()
             steps += 1
         for key in agg:
@@ -414,46 +690,83 @@ def main():
         if steps == 0:
             raise SystemExit(
                 "training loader produced no batches: the subset is smaller than "
-                "--batch_size with drop_last enabled; lower --batch_size")
+                "--batch_size with drop_last enabled; lower --batch_size"
+            )
 
         # Validation uses the same beta as training, so val_loss stays on the same
         # scale as the objective actually being optimised at this epoch.
-        val_loss, val_recon = validate(enc, dec, perc, val_loader, device,
-                                       beta, args.perc_weight)
+        val_loss, val_recon = validate(
+            enc, dec, perc, val_loader, device, beta, args.perc_weight
+        )
         monitored = val_recon if args.monitor == "val_recon" else val_loss
-        sched_g.step(monitored); sched_d.step(monitored)
+        sched_g.step(monitored)
+        sched_d.step(monitored)
         lr = opt_g.param_groups[0]["lr"]
 
-        fid = compute_fid() if (args.fid_every and epoch % args.fid_every == 0) else float("nan")
+        fid = (
+            compute_fid()
+            if (args.fid_every and epoch % args.fid_every == 0)
+            else float("nan")
+        )
         seconds = time.time() - t0
 
         with open(history_path, "a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow([epoch, f"{beta:.6f}", f"{agg['recon']:.6f}",
-                                    f"{agg['kl']:.6f}",
-                                    f"{agg['perc']:.6f}", f"{agg['g']:.6f}",
-                                    f"{agg['d']:.6f}", f"{val_loss:.6f}",
-                                    f"{val_recon:.6f}", f"{fid:.4f}",
-                                    f"{lr:.3e}", f"{seconds:.1f}"])
-        print(f"epoch {epoch}/{args.epochs} beta={beta:.4f} recon={agg['recon']:.4f} "
-              f"kl={agg['kl']:.4f} perc={agg['perc']:.4f} loss_d={agg['d']:.4f} "
-              f"val={val_loss:.4f} val_recon={val_recon:.4f} fid={fid:.2f} "
-              f"lr={lr:.1e} ({seconds:.0f}s)")
+            csv.writer(f).writerow(
+                [
+                    epoch,
+                    f"{beta:.6f}",
+                    f"{agg['recon']:.6f}",
+                    f"{agg['kl']:.6f}",
+                    f"{agg['perc']:.6f}",
+                    f"{agg['g']:.6f}",
+                    f"{agg['d']:.6f}",
+                    f"{val_loss:.6f}",
+                    f"{val_recon:.6f}",
+                    f"{fid:.4f}",
+                    f"{lr:.3e}",
+                    f"{seconds:.1f}",
+                ]
+            )
+        print(
+            f"epoch {epoch}/{args.epochs} beta={beta:.4f} recon={agg['recon']:.4f} "
+            f"kl={agg['kl']:.4f} perc={agg['perc']:.4f} loss_d={agg['d']:.4f} "
+            f"val={val_loss:.4f} val_recon={val_recon:.4f} fid={fid:.2f} "
+            f"lr={lr:.1e} ({seconds:.0f}s)"
+        )
 
-        if (args.sample_every and epoch % args.sample_every == 0) or epoch == args.epochs:
-            save_sample_grid(enc, dec, grid_x, grid_y, args.latent_dim,
-                             out / f"samples_ep{epoch}.png", nrow=grid_nrow)
+        if (
+            args.sample_every and epoch % args.sample_every == 0
+        ) or epoch == args.epochs:
+            save_sample_grid(
+                enc,
+                dec,
+                grid_x,
+                grid_y,
+                args.latent_dim,
+                out / f"samples_ep{epoch}.png",
+                nrow=grid_nrow,
+            )
 
         if monitored < best["monitored"] - 1e-6:
-            best = {"val": val_loss, "monitored": monitored, "epoch": epoch, "fid": fid,
-                    "state": cpu_state(enc, dec, dis)}
+            best = {
+                "val": val_loss,
+                "monitored": monitored,
+                "epoch": epoch,
+                "fid": fid,
+                "state": cpu_state(enc, dec, dis),
+            }
             bad_epochs = 0
-            torch.save(best_state_payload(best, args, classes, num_classes), out / "joint.pt")
+            torch.save(
+                best_state_payload(best, args, classes, num_classes), out / "joint.pt"
+            )
             print(f"  -> new best {args.monitor}={monitored:.4f}, checkpoint saved")
         else:
             bad_epochs += 1
             if bad_epochs >= args.patience:
-                print(f"early stopping at epoch {epoch}: no {args.monitor} improvement for "
-                      f"{bad_epochs} epochs (best epoch {best['epoch']})")
+                print(
+                    f"early stopping at epoch {epoch}: no {args.monitor} improvement for "
+                    f"{bad_epochs} epochs (best epoch {best['epoch']})"
+                )
                 break
 
     if best["state"] is None:
@@ -461,14 +774,18 @@ def main():
         # baseline was never beaten and no checkpoint was written - say so
         # instead of pointing at a joint.pt that does not exist.
         raise SystemExit(
-            f"no epoch produced a finite {args.monitor}; no checkpoint was saved")
-    print(f"best: epoch {best['epoch']} {args.monitor}={best['monitored']:.4f} "
-          f"val_loss={best['val']:.4f} fid={best['fid']:.2f}")
+            f"no epoch produced a finite {args.monitor}; no checkpoint was saved"
+        )
+    print(
+        f"best: epoch {best['epoch']} {args.monitor}={best['monitored']:.4f} "
+        f"val_loss={best['val']:.4f} fid={best['fid']:.2f}"
+    )
     print(f"checkpoint -> {out / 'joint.pt'}; history -> {history_path}")
 
 
 def cpu_state(enc, dec, dis):
     """Snapshot the three modules onto CPU so the best-so-far copy costs no VRAM."""
+
     def to_cpu(module):
         return {k: v.detach().cpu().clone() for k, v in module.state_dict().items()}
 
@@ -479,21 +796,47 @@ def best_state_payload(best, args, classes, num_classes):
     """Everything generate.py and the figures need, including class NAMES so a
     different dataset cannot silently map labels to the wrong folders."""
     payload = dict(best["state"])
-    payload.update({
-        "num_classes": num_classes, "classes": classes,
-        "latent_dim": args.latent_dim, "base_ch": args.base_ch,
-        "img_size": args.img_size, "img_channels": args.channels,
-        "best_epoch": best["epoch"], "best_val_loss": best["val"], "best_fid": best["fid"],
-        "best_monitored_metric": args.monitor, "best_monitored_value": best["monitored"],
-        "kl_weight": args.kl_weight, "perc_weight": args.perc_weight,
-        "adv_weight": args.adv_weight, "seed": args.seed,
-        "d_norm": args.d_norm, "g_norm": args.g_norm,
-        "adv_loss": args.adv_loss, "d_spectral_norm": args.d_spectral_norm,
-        "split_by": args.split_by, "weighted_sampler": args.weighted_sampler,
-        "kl_warmup": args.kl_warmup, "monitor": args.monitor,
-        "fft_denoise": args.fft_denoise, "fft_cutoff": args.fft_cutoff,
-        "subset": args.subset, "test_frac": args.test_frac,
-    })
+    payload.update(
+        {
+            "num_classes": num_classes,
+            "classes": classes,
+            "latent_dim": args.latent_dim,
+            "base_ch": args.base_ch,
+            "img_size": args.img_size,
+            "img_channels": args.channels,
+            "best_epoch": best["epoch"],
+            "best_val_loss": best["val"],
+            "best_fid": best["fid"],
+            "best_monitored_metric": args.monitor,
+            "best_monitored_value": best["monitored"],
+            "kl_weight": args.kl_weight,
+            "perc_weight": args.perc_weight,
+            "adv_weight": args.adv_weight,
+            "seed": args.seed,
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "val_per_class": args.val_per_class,
+            "lr": args.lr,
+            "lr_d": args.lr_d,
+            "lr_factor": args.lr_factor,
+            "lr_patience": args.lr_patience,
+            "patience": args.patience,
+            "fid_every": args.fid_every,
+            "sample_every": args.sample_every,
+            "d_norm": args.d_norm,
+            "g_norm": args.g_norm,
+            "adv_loss": args.adv_loss,
+            "d_spectral_norm": args.d_spectral_norm,
+            "split_by": args.split_by,
+            "weighted_sampler": args.weighted_sampler,
+            "kl_warmup": args.kl_warmup,
+            "monitor": args.monitor,
+            "fft_denoise": args.fft_denoise,
+            "fft_cutoff": args.fft_cutoff,
+            "subset": args.subset,
+            "test_frac": args.test_frac,
+        }
+    )
     return payload
 
 
