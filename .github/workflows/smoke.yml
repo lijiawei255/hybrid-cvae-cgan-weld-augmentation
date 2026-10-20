@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -26,10 +26,11 @@ jobs:
         # requirement cannot replace the build resolved on the line above.
         # This mirrors the documented local procedure in requirements-lock.txt.
         run: |
-          pip install $(grep -v '^#' requirements.txt | grep -v '^pytorch-fid' | tr '\n' ' ')
+          grep -v '^#' requirements.txt | grep -v '^pytorch-fid' > /tmp/requirements-ci.txt
+          pip install -r /tmp/requirements-ci.txt
           pip install --no-deps 'pytorch-fid>=0.3.0,<0.4'
       - name: Cache pretrained weights (VGG19, InceptionV3)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/torch
           key: torch-weights-${{ runner.os }}
